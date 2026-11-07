@@ -36,9 +36,11 @@ do not replace it with Eglantine or discard the local fixes.
   split tests pass 30 cases / 442 assertions, and four configuration/updater/SDL
   CTest targets pass. The three prior video/NUP failures are gone; baseline is
   zero failures. Evidence: `../validation/2026-11-07-latest-lichii.md`.
-- [ ] Complete independent integration spec/quality reviews, then fast-forward
+- [x] Complete independent integration spec/quality reviews, then fast-forward
   `fix/amd-five-issues` to the verified integration commit. Source spec review
-  passed at `41fd0500fe8`; quality review and the root's final handoff remain.
+  and quality review passed at `41fd0500fe8`, and both reviewers verified the final
+  GUI relink and four passing CTest targets. The fix branch was fast-forwarded to
+  the reviewed integration, including its documentation-only followups.
 - [x] Reconcile tasks 3 and 4 with upstream's already-merged NaN PR432 and
   fragment-output PR353. Preserve those adopted fixes, add missing regressions and
   migration corrections in the still-open tasks below, and record provenance
