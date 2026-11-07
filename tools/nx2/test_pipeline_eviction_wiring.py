@@ -45,7 +45,7 @@ def check_retirement(source, graphics):
     ownership = ("if(used_this_session.erase(pipeline)!=0){"
                  "used_and_evicted.insert(it->first.Hash());}"
                  "evicted_pipelines.emplace_back(tick,std::move(it->second));"
-                 "it=graphics_cache.erase(it);++evicted;")
+                 "graphics_cache.erase(it);++evicted;")
     require(ownership in body, "Keep bookkeeping, move ownership, then erase lookup")
     cleanup = ("if(evicted==0){return;}for(auto&[key,pipeline]:graphics_cache){"
                "if(pipeline){pipeline->ClearTransitions();}}")
@@ -63,13 +63,20 @@ def check_policy(source):
     predicate = ("returnpipeline&&IsPipelineEvictionCandidate(frame_count,pipeline->LastUse(),true,"
                  "pipeline==current_pipeline,pipeline->IsBuilt());")
     require(predicate in body, "Production eligibility must short-circuit null before dereferencing")
-    require("if(evictable(pipeline.get())){last_uses.push_back(pipeline->LastUse());}" in body,
+    require("if(evictable(pipeline.get())){candidates.push_back({it,pipeline->LastUse()});}" in body,
             "Collect only eligible candidates")
-    require("PipelineEvictionQuota(switch2,graphics_cache.size(),budget,last_uses.size())" in body,
+    require("PipelineEvictionQuota(switch2,graphics_cache.size(),budget,candidates.size())" in body,
             "Quota must count every lookup entry and only eligible candidates")
-    require("oldest.emplace(last_uses,max_evicted);" in body, "Use oldest selection")
-    require("if(!evictable(pipeline)||(oldest&&!oldest->Take(pipeline->LastUse()))){++it;continue;}"
-            in body, "Filter with the same predicate before consuming selection ties")
+    require("if(switch2){SelectOldestPipelineCandidates(candidates,max_evicted);}" in body,
+            "Use oldest selection on the captured candidate snapshot")
+    retirement = "for(constauto&candidate:candidates){autoit=candidate.entry;"
+    require(retirement in body, "Retire only captured candidate identities")
+    opening = body.index(retirement) + retirement.index("{")
+    retired = body[opening + 1:closing(body, opening, "{", "}")]
+    require("evictable(" not in retired and "LastUse(" not in retired and "IsBuilt(" not in retired,
+            "Do not read changing eligibility or age during snapshot retirement")
+    require(body.count("evictable(") == 1 and body.count("candidates.push_back(") == 1,
+            "Only the original collection may add candidates")
     budget = compact(function(source, "Switch2PipelineBudget"))
     require("staticconstsize_tbudget=Switch2PipelineBudgetFromBytes("
             "Common::GetMemInfo().TotalPhysicalMemory);returnbudget;" == budget,
@@ -87,6 +94,11 @@ class PipelineEvictionWiring(unittest.TestCase):
 
     def test_production_policy_wiring(self):
         check_policy(self.source)
+
+    def test_retirement_uses_frozen_candidate_identities(self):
+        body = compact(function(code_only(self.source), "PipelineCache::EvictUnusedPipelines"))
+        require("for(constauto&candidate:candidates){autoit=candidate.entry;" in body,
+                "Retirement must traverse captured candidate identities, not rescan live build flags")
 
     def test_actual_retirement_mutations_are_rejected(self):
         mutations = {
@@ -124,8 +136,9 @@ class PipelineEvictionWiring(unittest.TestCase):
         mutations = {
             "null dereference": ("pipeline &&", ""),
             "different collection": ("if (evictable(pipeline.get()))", "if (pipeline)"),
-            "unfiltered take": ("!evictable(pipeline) || ", ""),
-            "quota bypass": ("PipelineEvictionQuota(switch2, graphics_cache.size(), budget, last_uses.size())", "last_uses.size()"),
+            "live rescan": ("for (const auto& candidate : candidates) {\n        auto it = candidate.entry;",
+                            "for (auto it = graphics_cache.begin(); it != graphics_cache.end(); ++it) {"),
+            "quota bypass": ("PipelineEvictionQuota(switch2, graphics_cache.size(), budget, candidates.size())", "candidates.size()"),
         }
         source = code_only(self.source)
         original = function(source, "PipelineCache::EvictUnusedPipelines")

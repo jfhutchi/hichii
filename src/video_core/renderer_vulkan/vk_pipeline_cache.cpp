@@ -1186,38 +1186,36 @@ void PipelineCache::EvictUnusedPipelines() {
     if (switch2 && graphics_cache.size() <= budget) {
         return;
     }
-    std::vector<u64> last_uses;
-    last_uses.reserve(graphics_cache.size());
-    for (const auto& [key, pipeline] : graphics_cache) {
+    std::vector<PipelineEvictionCandidate<decltype(graphics_cache)::iterator>> candidates;
+    candidates.reserve(graphics_cache.size());
+    for (auto it = graphics_cache.begin(); it != graphics_cache.end(); ++it) {
+        const auto& pipeline = it->second;
         if (evictable(pipeline.get())) {
-            last_uses.push_back(pipeline->LastUse());
+            candidates.push_back({it, pipeline->LastUse()});
         }
     }
     const size_t max_evicted =
-        PipelineEvictionQuota(switch2, graphics_cache.size(), budget, last_uses.size());
+        PipelineEvictionQuota(switch2, graphics_cache.size(), budget, candidates.size());
     if (max_evicted == 0) {
         return;
     }
-    std::optional<OldestPipelineSelection> oldest;
     // Rebuilding Switch 2 shaders translates them on the GPU thread. Retain up to
     // the budget, then select exactly the oldest eligible excess, including ties.
     if (switch2) {
-        oldest.emplace(last_uses, max_evicted);
+        SelectOldestPipelineCandidates(candidates, max_evicted);
     }
     const u64 tick = scheduler.CurrentTick();
     size_t evicted = 0;
-    for (auto it = graphics_cache.begin(); it != graphics_cache.end() && evicted < max_evicted;) {
+    // Erasing a flat-map entry preserves other iterators; no insertions occur here.
+    // Retire only the snapshot, even if a worker completed another pipeline meanwhile.
+    for (const auto& candidate : candidates) {
+        auto it = candidate.entry;
         GraphicsPipeline* const pipeline = it->second.get();
-        // Take() must only see candidates included in the selection.
-        if (!evictable(pipeline) || (oldest && !oldest->Take(pipeline->LastUse()))) {
-            ++it;
-            continue;
-        }
         if (used_this_session.erase(pipeline) != 0) {
             used_and_evicted.insert(it->first.Hash());
         }
         evicted_pipelines.emplace_back(tick, std::move(it->second));
-        it = graphics_cache.erase(it);
+        graphics_cache.erase(it);
         ++evicted;
     }
     if (evicted == 0) {

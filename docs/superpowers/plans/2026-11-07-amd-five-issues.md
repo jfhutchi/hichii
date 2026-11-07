@@ -215,12 +215,18 @@ src/tests/video_core/pipeline_eviction_policy.cpp; affected CMakeLists.txt.
 - [x] Run cache/build/eviction tests, compile vk_pipeline_cache.cpp and commit.
 
 Evidence: `../validation/2026-11-07-pipeline-retention.md`. Age-only RED has the
-two intended under/equal-budget failures. Final retention tests pass 9 cases /
-997 assertions; focused cache/build/retention passes 37 / 1,559; full main passes
-873 / 70,028,114 with zero failures. Structural retirement/policy wiring passes
-5/5, both CLI/GUI production builds pass, and GUI CTest passes 4/4. The quota is
-soft when eligible stale entries are insufficient; structural tests do not execute
-live GPU completion. Independent spec and quality review precede publication.
+two intended under/equal-budget failures. Quality review identified a P2 gap in
+the initially green stable-candidate tests: worker build completion could admit
+a new candidate between scans and displace an older one. The follow-up captures
+typed candidate identities and ages, selects only that snapshot, and adds a
+deterministic regression using actual Common/Boost map iterators and erasure.
+The new snapshot structural requirement is RED on the prior production source.
+Final focused cache/build/retention passes 38 / 1,583; full main passes 874 /
+70,029,655 with zero failures. Structural retirement/policy wiring passes 6/6,
+both CLI/GUI production builds pass, and GUI CTest passes 4/4. The quota is soft
+when eligible stale entries are insufficient; structural tests do not execute
+live GPU completion. Independent spec and quality reviews are repeated for the
+snapshot correction before publication.
 
 ## Task 6: Controller/profile persistence (prioritized after task 2)
 

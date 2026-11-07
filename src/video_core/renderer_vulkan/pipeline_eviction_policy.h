@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <span>
+#include <vector>
 
 #include "common/common_types.h"
 
@@ -63,5 +64,26 @@ private:
     u64 cutoff{};
     size_t equal_remaining{};
 };
+
+template <typename Iterator>
+struct PipelineEvictionCandidate {
+    Iterator entry;
+    u64 last_use;
+};
+
+// Selection only examines the captured identities and ages. A worker finishing
+// another pipeline after collection cannot enter this eviction pass.
+template <typename Iterator>
+void SelectOldestPipelineCandidates(std::vector<PipelineEvictionCandidate<Iterator>>& candidates,
+                                    size_t count) {
+    std::vector<u64> last_uses;
+    last_uses.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+        last_uses.push_back(candidate.last_use);
+    }
+    OldestPipelineSelection oldest{last_uses, count};
+    std::erase_if(candidates,
+                  [&oldest](const auto& candidate) { return !oldest.Take(candidate.last_use); });
+}
 
 } // namespace Vulkan

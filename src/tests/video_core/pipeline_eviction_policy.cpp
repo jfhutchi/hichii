@@ -7,6 +7,7 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 
+#include "common/container/unordered_map.h"
 #include "video_core/renderer_vulkan/pipeline_eviction_policy.h"
 
 TEST_CASE("Switch 2 retains stale pipelines within its budget", "[video_core][pipeline_eviction]") {
@@ -150,5 +151,45 @@ TEST_CASE("Pipeline retention applies production policy to mixed lookup entries"
         }
         std::ranges::sort(retired);
         CHECK(retired == (switch2 ? std::vector<u64>{100, 200} : std::vector<u64>{100, 200, 200}));
+    }
+}
+
+TEST_CASE("Pipeline eviction freezes identities before asynchronous build completion",
+          "[video_core][pipeline_eviction][pipeline_eviction_snapshot]") {
+    struct Entry {
+        u64 last_use;
+        bool built;
+    };
+    // The middle entry becomes eligible after the snapshot. Its age must never
+    // replace either collected candidate, including at or below the cutoff.
+    for (const u64 completed_age : {150ULL, 200ULL, 50ULL}) {
+        for (const size_t quota : {size_t{1}, size_t{2}}) {
+            CAPTURE(completed_age, quota);
+            Common::unordered_map<int, Entry> entries{
+                {0, {200, true}}, {1, {completed_age, false}}, {2, {100, true}}};
+            std::vector<Vulkan::PipelineEvictionCandidate<decltype(entries)::iterator>> candidates;
+            for (const int id : {0, 1, 2}) {
+                const auto it = entries.find(id);
+                const auto& entry = it->second;
+                if (Vulkan::IsPipelineEvictionCandidate(20000, entry.last_use, true, false,
+                                                        entry.built)) {
+                    candidates.push_back({it, entry.last_use});
+                }
+            }
+            REQUIRE(candidates.size() == 2);
+            entries.at(1).built = true;
+            // Captured last-use frames also remain the selection input.
+            entries.at(0).last_use = 0;
+            Vulkan::SelectOldestPipelineCandidates(candidates, quota);
+            REQUIRE(candidates.size() == quota);
+            std::vector<int> selected;
+            for (const auto& candidate : candidates) {
+                selected.push_back(candidate.entry->first);
+                entries.erase(candidate.entry);
+            }
+            std::ranges::sort(selected);
+            CHECK(selected == (quota == 1 ? std::vector<int>{2} : std::vector<int>{0, 2}));
+            CHECK(entries.contains(1));
+        }
     }
 }

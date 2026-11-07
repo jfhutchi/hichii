@@ -20,7 +20,8 @@ Original code credit: Jordan <madebyjordan@users.noreply.github.com> and
 monsterlag <64719697+monsterlag@users.noreply.github.com>. The source commits
 also credit Claude Opus 5.5 <noreply@anthropic.com>. Commit trailers preserve
 these credits. The selector's algorithm is unchanged; local adaptation adds
-small production-used budget, eligibility and quota functions for headless tests.
+small production-used budget, eligibility and quota functions plus a typed
+candidate snapshot for headless tests and asynchronous-build safety.
 
 The implementation started from `0da3a4c3ae92ae8182b151eda01d3f4ab4e92196` on
 `fix/amd-five-issues`, including the reviewed latest-parent integration and four
@@ -37,8 +38,9 @@ minimum to the unchanged 3,000-entry boot limit.
 
 Above that budget, only nonnull, noncurrent, built pipelines with
 `last_use < frame_count - 9000` can retire, after the explicit
-`frame_count > 9000` guard. The same predicate filters collection and retirement,
-with a null short circuit before accessing pipeline members. The retirement
+`frame_count > 9000` guard. Collection uses a null short circuit before accessing
+pipeline members and captures each eligible entry's iterator and last-use frame.
+Selection and retirement operate only on that snapshot. The retirement
 quota is exactly `min(lookup_count - budget, eligible_count)`. Oldest selection
 uses the cutoff value itself and a separate tie count, without `cutoff + 1`.
 Switch 1 retires all eligible stale pipelines. MoltenVK retains its early return.
@@ -94,7 +96,7 @@ fixture initially selected an earlier MoltenVK occurrence and a formatting-sensi
 anchor; both were corrected to target the eviction method before final validation.
 These mutations never rewrote production files or produced mutated build objects.
 
-## Final validation
+## Initial validation before quality-review follow-up
 
 - Main Release `tests` and `yuzu-cmd` pass with clang-cl 23.1.5, VS2022 MSVC14.44
   headers, WERROR, Ninja and 12 jobs. The final focused build explicitly recompiles
@@ -120,3 +122,59 @@ one dual-source module were not regenerated. Structural checks verify wiring,
 not execution of a live Vulkan device's GPU completion. No Radeon gameplay,
 frame-rate improvement or hard memory ceiling is claimed. No emulator/GUI was
 started or stopped, no game/keys/configuration were touched, and nothing was pushed.
+
+## Quality-review follow-up: freeze candidate membership
+
+The initial source-spec review passed under a stable-candidate assumption, but
+quality review found a P2 race in commit `5c074085606b978a1970121737e6e5ccbbb15b09`.
+`PipelineBuild::IsBuilt()` reads `state->complete` atomically; a worker can set it
+between collection and retirement. With collected ages `{100, 200}`, quota two,
+and second-pass order `200, newly-built 150, 100`, reevaluating the same predicate
+admits 150, exhausts the quota, and leaves 100. The original green tests and
+same-predicate structural checks were insufficient to establish a stable set.
+
+The follow-up captures typed cache iterators and ages in
+`PipelineEvictionCandidate`. `SelectOldestPipelineCandidates` invokes the same
+`OldestPipelineSelection` only on those captured ages and removes unselected
+records. Retirement traverses the selected vector directly. A newly completed
+pipeline waits until a later eviction check; neither its identity nor changed
+last-use metadata can enter the current selection. Switch 1 also retires from
+the captured eligible set, and all existing quota, age, ownership and cleanup
+rules remain in force.
+
+`Common::unordered_map` is Boost 1.92 `unordered_flat_map`. Its local
+`detail/foa/table.hpp` erase forwards to `detail/foa/core.hpp`, which destroys
+only the designated element and recovers that slot; no other entry is moved.
+There are no insertions or rehashes between capture and retirement. The new
+deterministic test uses that actual Common/Boost container and erases selected
+iterators, rather than relying on a std::unordered_map lifetime assumption.
+
+Before the production correction, the added method-scoped snapshot requirement
+failed on the actual prior source: **1 of 6 structural checks failed**, with the
+diagnostic that retirement must traverse captured identities instead of rescanning
+live build flags. `.local-tools/task5-snapshot-red.log`. The new C++ case captures
+ages 200 and 100, completes the previously building middle entry at age 150, 200,
+or 50, and checks quotas one and two. It also changes a live age after capture to
+ensure selection uses the recorded value. Both quotas preserve the new entry;
+quota one retires identity 100, and quota two retires the original 100/200 pair.
+This exercises the shared production snapshot selector without constructing
+fake Vulkan pipelines or copying its selection algorithm into the test.
+
+Final follow-up validation supersedes the initial results above:
+
+- Focused cache/build/retention: **38 cases / 1,583 assertions**, zero failures,
+  seed 2618141366. `.local-tools/task5-snapshot-focused-tests.log`; its build log
+  records fresh test and Vulkan cache production compilation plus CLI relink.
+- Full main: **874 cases / 70,029,655 assertions**, zero failures, seed 1215636218.
+  `.local-tools/task5-snapshot-full-tests.log`. This adds one deterministic case
+  to the prior 873; concurrency-dependent assertion totals still vary.
+- Structural checks: **6/6 pass**, with a new negative mutation replacing
+  snapshot traversal with a live cache rescan. The checker also requires a
+  single original candidate-collection site and no eligibility/age reads in
+  retirement. `.local-tools/task5-snapshot-wiring.log`.
+- GUI targets `yuzu`, `yuzu-cmd`, `input_profile_tests`, `config_tests`: pass;
+  changed Vulkan cache production unit rebuilt. GUI CTest: **4/4 pass**.
+  `.local-tools/task5-snapshot-gui-build.log` and
+  `.local-tools/task5-snapshot-gui-ctest.log`.
+- `git diff --check`: pass. No other policy or attribution changes. Independent
+  source-spec and quality review are requested again for this correction.
