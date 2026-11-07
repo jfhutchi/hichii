@@ -4,6 +4,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string_view>
 #include <system_error>
 
@@ -90,6 +91,30 @@ inline bool CopyCompatiblePipelineCache(const std::filesystem::path& source,
         return false;
     }
     return true;
+}
+
+/// Migrate compatible serialized environments and only their matching usage list. Driver blobs
+/// have their own compatibility policy and are not handled here.
+[[nodiscard]] inline std::optional<u32> MigrateVulkanShaderCache(
+    const std::filesystem::path& directory) {
+    constexpr std::array<char, 8> magic{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+    const auto destination =
+        VersionedPipelineCachePath(directory, "vulkan", VulkanPipelineCacheVersion);
+    for (const u32 source_version : {53U, 52U}) {
+        if (!CopyCompatiblePipelineCache(
+                VersionedPipelineCachePath(directory, "vulkan", source_version), destination,
+                magic, source_version, VulkanPipelineCacheVersion)) {
+            continue;
+        }
+        std::error_code error;
+        std::filesystem::copy_file(
+            VersionedPipelineCachePath(directory, "vulkan_used", source_version),
+            VersionedPipelineCachePath(directory, "vulkan_used", VulkanPipelineCacheVersion),
+            std::filesystem::copy_options::none, error);
+        // A missing usage list is legitimate; never substitute another generation's list.
+        return source_version;
+    }
+    return std::nullopt;
 }
 
 } // namespace VideoCommon

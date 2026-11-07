@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <thread>
+#include <tuple>
 #include <vector>
 #include <bit>
 #include <numeric>
@@ -852,14 +853,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         VideoCommon::VersionedPipelineCachePath(base_dir, "vulkan", CACHE_VERSION);
     used_pipelines_filename =
         VideoCommon::VersionedPipelineCachePath(base_dir, "vulkan_used", CACHE_VERSION);
-    constexpr std::array<char, 8> shader_magic{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
-    VideoCommon::CopyCompatiblePipelineCache(
-        VideoCommon::VersionedPipelineCachePath(base_dir, "vulkan", 52), pipeline_cache_filename,
-        shader_magic, 52, CACHE_VERSION);
-    std::error_code migration_error;
-    std::filesystem::copy_file(VideoCommon::VersionedPipelineCachePath(base_dir, "vulkan_used", 52),
-                               used_pipelines_filename, std::filesystem::copy_options::none,
-                               migration_error);
+    std::ignore = VideoCommon::MigrateVulkanShaderCache(base_dir);
     used_pipelines = LoadUsedPipelines(used_pipelines_filename, MaxUsedPipelineAge(device));
     used_pipelines_saved = std::chrono::steady_clock::now();
     size_t skipped_pipelines = 0;
@@ -869,6 +863,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     if (use_vulkan_pipeline_cache) {
         vulkan_pipeline_cache_filename =
             VideoCommon::VersionedPipelineCachePath(base_dir, "vulkan_pipelines", CACHE_VERSION);
+        // Opaque driver data retains its separate v52 compatibility policy. Migrating the
+        // serialized shader environments above is what allows their SPIR-V to be re-emitted.
         VideoCommon::CopyCompatiblePipelineCache(
             VideoCommon::VersionedPipelineCachePath(base_dir, "vulkan_pipelines", 52),
             vulkan_pipeline_cache_filename, VULKAN_CACHE_MAGIC_NUMBER, 52, CACHE_VERSION);

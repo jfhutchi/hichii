@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -9,6 +10,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "shader_recompiler/backend/spirv/emit_spirv.h"
+#include "shader_recompiler/frontend/ampere/lower_to_maxwell.h"
+#include "shader_recompiler/frontend/ampere/program_address_map.h"
+#include "shader_recompiler/frontend/maxwell/structured_control_flow.h"
+#include "shader_recompiler/frontend/maxwell/translate_program.h"
+#include "shader_recompiler/host_translate_info.h"
 #include "video_core/pipeline_cache_files.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/shader_environment.h"
@@ -45,7 +52,7 @@ std::string ReadAll(const std::filesystem::path& file) {
     return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
 }
 
-class SerializedEnvironment final : public VideoCommon::GenericEnvironment {
+class SerializedEnvironment : public VideoCommon::GenericEnvironment {
 public:
     explicit SerializedEnvironment(Shader::Stage shader_stage) {
         stage = shader_stage;
@@ -79,7 +86,237 @@ public:
     }
 };
 
+class NativeMinMaxEnvironment final : public SerializedEnvironment {
+public:
+    NativeMinMaxEnvironment() : SerializedEnvironment{Shader::Stage::Compute} {
+        // Synthetic native instructions, not a captured game shader. Dynamic invocation IDs
+        // and shared stores retain both floating operations through optimization.
+        using Shader::Ampere::Instruction;
+        constexpr std::array instructions{
+            Instruction{{0x00007919, 0, 0x00002100, 0}}, // S2R R0, TID.X
+            Instruction{{0x00017919, 0, 0x00002200, 0}}, // S2R R1, TID.Y
+            Instruction{{0x00047209, 1, 0x03800000, 0}}, // FMNMX R4, R0, R1, PT
+            Instruction{{0x00057209, 1, 0x07800000, 0}}, // FMNMX R5, R0, R1, !PT
+            Instruction{{0xff007388, 4, 0x00000800, 0}}, // STS.32 [RZ], R4
+            Instruction{{0xff007388, 0x405, 0x00000800, 0}}, // STS.32 [RZ+4], R5
+            Instruction{{0x0000794d, 0, 0x03800000, 0}}, // EXIT
+        };
+        const auto lowered = Shader::Ampere::LowerToMaxwell(instructions);
+        INFO(lowered.error);
+        REQUIRE(lowered);
+        code.assign(sizeof(sph) / sizeof(u64), 0);
+        for (const u64 instruction : lowered.instructions) {
+            if ((code.size() * sizeof(u64)) % 32 == 0) {
+                code.push_back(0);
+            }
+            code.push_back(instruction);
+        }
+        code.push_back(0);
+        Shader::Ampere::AppendNativeAddressMap(code, lowered.source_instruction_offsets);
+        initial_offset = sizeof(sph);
+        cached_lowest = 0;
+        cached_highest = static_cast<u32>((code.size() - 1) * sizeof(u64));
+        workgroup_size = {32, 2, 1};
+        shared_memory_size = 8;
+    }
+};
+
 } // Anonymous namespace
+
+TEST_CASE("Migrated v53 native compute environments retranslate to NaN-defined SPIR-V",
+          "[pipeline_cache_files][nan_cache_retranslation]") {
+    TempDir temp;
+    const auto old = VideoCommon::VersionedPipelineCachePath(temp.path, "vulkan", 53);
+    const auto current = VideoCommon::VersionedPipelineCachePath(
+        temp.path, "vulkan", VideoCommon::VulkanPipelineCacheVersion);
+    NativeMinMaxEnvironment source;
+    const Vulkan::ComputePipelineCacheKey key{
+        .unique_hash = 0x325,
+        .shared_memory_size = 8,
+        .workgroup_size = {32, 2, 1},
+    };
+    const std::array<const VideoCommon::GenericEnvironment*, 1> envs{&source};
+    VideoCommon::SerializePipeline(key, envs, old, 53);
+    const auto before = ReadAll(old);
+    REQUIRE(VideoCommon::MigrateVulkanShaderCache(temp.path) == 53);
+    REQUIRE(ReadAll(old) == before);
+    REQUIRE(ReadAll(current).substr(12) == before.substr(12));
+    size_t loaded = 0;
+    VideoCommon::LoadPipelines(
+        {}, current, VideoCommon::VulkanPipelineCacheVersion,
+        [&](std::ifstream& file, VideoCommon::FileEnvironment restored) {
+            ++loaded;
+            Vulkan::ComputePipelineCacheKey restored_key{};
+            file.read(reinterpret_cast<char*>(&restored_key), sizeof(restored_key));
+            REQUIRE(file.good());
+            CHECK(restored_key == key);
+            CHECK(restored.ShaderStage() == Shader::Stage::Compute);
+            CHECK(restored.IsNativeProgram());
+            CHECK(restored.HasNativeInstructions());
+            CHECK(restored.WorkgroupSize() == key.workgroup_size);
+            CHECK(restored.SharedMemorySize() == key.shared_memory_size);
+            for (u32 address = 0; address < 7 * 16; address += 16) {
+                CHECK(restored.TranslateProgramAddress(address) ==
+                      source.TranslateProgramAddress(address));
+            }
+            Shader::ObjectPool<Shader::Maxwell::Flow::Block> flow_pool;
+            Shader::Maxwell::Flow::CFG cfg{restored, flow_pool, Shader::Maxwell::Location{0x50}};
+            Shader::ObjectPool<Shader::IR::Inst> inst_pool;
+            Shader::ObjectPool<Shader::IR::Block> block_pool;
+            auto program = Shader::Maxwell::TranslateProgram(
+                inst_pool, block_pool, restored, cfg, Shader::HostTranslateInfo{});
+            size_t stores = 0;
+            for (const auto* block : program.blocks) {
+                for (const auto& inst : block->Instructions()) {
+                    stores += inst.GetOpcode() == Shader::IR::Opcode::WriteSharedU32;
+                }
+            }
+            REQUIRE(stores == 2);
+            Shader::Profile profile{};
+            profile.supported_spirv = 0x00010500;
+            const auto code = Shader::Backend::SPIRV::EmitSPIRV(profile, program);
+            size_t nmin = 0;
+            size_t nmax = 0;
+            for (size_t offset = 5; offset < code.size();) {
+                const u32 size = code[offset] >> 16;
+                REQUIRE(size > 0);
+                REQUIRE(offset + size <= code.size());
+                if ((code[offset] & 0xffffU) == 12) { // OpExtInst, GLSL.std.450 only
+                    REQUIRE(size >= 5);
+                    const u32 operation = code[offset + 4];
+                    CHECK(operation != 37); // FMin
+                    CHECK(operation != 40); // FMax
+                    CHECK(operation != 43); // FClamp
+                    nmin += operation == 79;
+                    nmax += operation == 80;
+                }
+                offset += size;
+            }
+            CHECK(nmin == 1);
+            CHECK(nmax == 1);
+            if (const char* directory = std::getenv("EDEN_NAN_TEST_OUTPUT")) {
+                std::filesystem::create_directories(directory);
+                std::ofstream output{std::filesystem::path{directory} / "cached-native.spv",
+                                     std::ios::binary};
+                output.write(reinterpret_cast<const char*>(code.data()),
+                             static_cast<std::streamsize>(code.size() * sizeof(u32)));
+                REQUIRE(output.good());
+            }
+        },
+        [](std::ifstream&, std::vector<VideoCommon::FileEnvironment>) {
+            FAIL("Unexpected graphics record");
+        });
+    REQUIRE(loaded == 1);
+}
+
+TEST_CASE("Shader cache migration selects the newest compatible environment and its used list",
+          "[pipeline_cache_files][nan_cache_migration]") {
+    TempDir temp;
+    const auto path = [&](std::string_view stem, u32 version) {
+        return VideoCommon::VersionedPipelineCachePath(temp.path, stem, version);
+    };
+    constexpr u32 current = VideoCommon::VulkanPipelineCacheVersion;
+    std::optional<u32> expected = 53;
+    WriteCache(path("vulkan", 52), Magic, 52, "older environment");
+    WriteCache(path("vulkan", 53), Magic, 53, "newer environment");
+    WriteCache(path("vulkan_used", 52), OtherMagic, 1, "older usage");
+    WriteCache(path("vulkan_used", 53), OtherMagic, 1, "newer usage");
+    bool missing_list = false;
+    bool existing_environment = false;
+    bool existing_list = false;
+    SECTION("newest compatible pair") {}
+    SECTION("v52 only") {
+        std::filesystem::remove(path("vulkan", 53));
+        expected = 52;
+    }
+    SECTION("invalid v53 falls back to v52") {
+        WriteCache(path("vulkan", 53), OtherMagic, 53, "wrong magic");
+        expected = 52;
+    }
+    SECTION("missing selected list does not import another generation") {
+        std::filesystem::remove(path("vulkan_used", 53));
+        missing_list = true;
+    }
+    SECTION("existing environment leaves both destinations alone") {
+        WriteCache(path("vulkan", current), Magic, current, "current environment");
+        existing_environment = true;
+        expected.reset();
+    }
+    SECTION("existing environment and used list are both preserved") {
+        WriteCache(path("vulkan", current), Magic, current, "current environment");
+        WriteCache(path("vulkan_used", current), OtherMagic, 1, "current usage");
+        existing_environment = true;
+        existing_list = true;
+        expected.reset();
+    }
+    SECTION("existing used list is preserved") {
+        WriteCache(path("vulkan_used", current), OtherMagic, 1, "current usage");
+        existing_list = true;
+    }
+    SECTION("no compatible environment leaves destinations absent") {
+        std::filesystem::remove(path("vulkan", 52));
+        std::filesystem::remove(path("vulkan", 53));
+        expected.reset();
+    }
+    SECTION("interrupted temporary copy is replaced") {
+        auto temporary = path("vulkan", current);
+        temporary += ".migrating";
+        std::ofstream{temporary} << "partial";
+    }
+    const auto old52 = ReadAll(path("vulkan", 52));
+    const auto old53 = ReadAll(path("vulkan", 53));
+    const auto used52 = ReadAll(path("vulkan_used", 52));
+    const auto used53 = ReadAll(path("vulkan_used", 53));
+    const auto before_env = ReadAll(path("vulkan", current));
+    const auto before_used = ReadAll(path("vulkan_used", current));
+    CHECK(VideoCommon::MigrateVulkanShaderCache(temp.path) == expected);
+    CHECK(ReadAll(path("vulkan", 52)) == old52);
+    CHECK(ReadAll(path("vulkan", 53)) == old53);
+    CHECK(ReadAll(path("vulkan_used", 52)) == used52);
+    CHECK(ReadAll(path("vulkan_used", 53)) == used53);
+    if (expected) {
+        CHECK(VideoCommon::PipelineCacheHeaderMatches(path("vulkan", current), Magic, current));
+        CHECK(ReadAll(path("vulkan", current)).substr(12) ==
+              (*expected == 53 ? old53 : old52).substr(12));
+    } else {
+        CHECK(ReadAll(path("vulkan", current)) == before_env);
+        CHECK(std::filesystem::exists(path("vulkan", current)) == existing_environment);
+    }
+    if (!expected || missing_list || existing_list) {
+        CHECK(ReadAll(path("vulkan_used", current)) == before_used);
+        CHECK(std::filesystem::exists(path("vulkan_used", current)) == existing_list);
+    } else {
+        CHECK(ReadAll(path("vulkan_used", current)) == (*expected == 53 ? used53 : used52));
+    }
+    auto temporary = path("vulkan", current);
+    temporary += ".migrating";
+    CHECK_FALSE(std::filesystem::exists(temporary));
+}
+
+TEST_CASE("Opaque driver cache v52 copy preserves bytes without importing shader environments",
+          "[pipeline_cache_files][nan_cache_migration]") {
+    TempDir temp;
+    const auto old = VideoCommon::VersionedPipelineCachePath(temp.path, "vulkan_pipelines", 52);
+    const auto newer = VideoCommon::VersionedPipelineCachePath(temp.path, "vulkan_pipelines", 53);
+    const auto destination = VideoCommon::VersionedPipelineCachePath(
+        temp.path, "vulkan_pipelines", VideoCommon::VulkanPipelineCacheVersion);
+    WriteCache(old, OtherMagic, 52, "opaque driver data");
+    WriteCache(newer, OtherMagic, 53, "separate newer driver data");
+    const auto before = ReadAll(old);
+    const auto before_newer = ReadAll(newer);
+    CHECK_FALSE(VideoCommon::MigrateVulkanShaderCache(temp.path));
+    CHECK_FALSE(std::filesystem::exists(destination));
+    // LoadDiskResources retains its separate explicit v52 driver-blob policy.
+    CHECK_FALSE(VideoCommon::CopyCompatiblePipelineCache(
+        old, destination, Magic, 52, VideoCommon::VulkanPipelineCacheVersion));
+    REQUIRE(VideoCommon::CopyCompatiblePipelineCache(
+        old, destination, OtherMagic, 52, VideoCommon::VulkanPipelineCacheVersion));
+    CHECK(VideoCommon::PipelineCacheHeaderMatches(
+        destination, OtherMagic, VideoCommon::VulkanPipelineCacheVersion));
+    CHECK(ReadAll(destination).substr(12) == before.substr(12));
+    CHECK(ReadAll(old) == before);
+    CHECK(ReadAll(newer) == before_newer);
+}
 
 TEST_CASE("Task and mesh disk environments roundtrip all translation state and record boundaries",
           "[pipeline_cache_files][mesh_serialization]") {

@@ -134,11 +134,17 @@ src/tests/video_core/buffer_cache_ports.cpp.
 
 ## Task 3: #325 NaN-defined min/max/clamp
 
+Implemented with independent source spec/quality reviews reporting no actionable
+findings. Full main suite passes 858 cases / 69,841,324 assertions; focused tests
+pass 17 cases / 201,545 assertions; 13 emitted SPIR-V modules validate; CLI/GUI
+builds and four GUI CTest targets pass. Exact red/green and evidence boundaries:
+`../validation/2026-11-07-nan-cache.md`. Radeon gameplay remains unverified.
+
 Files: src/shader_recompiler/backend/spirv/{emit_spirv_floating_point.cpp,spirv_emit_context.cpp};
 src/video_core/pipeline_cache_files.h; renderer_vulkan/vk_pipeline_cache.cpp;
 src/tests/video_core/{spirv_nan_safe_min_max.cpp,pipeline_cache_files.cpp}; tests/CMakeLists.txt.
 
-- [ ] Confirm existing #295 VectorViewIsExact and global scalar-word fallback.
+- [x] Confirm existing #295 VectorViewIsExact and global scalar-word fallback.
 - [x] Adopt the existing PR432 production changes and tests through direct-parent
   commit `2e69168aae8`, preserving ancestry and attribution to reviewed source
   commits `d3697a8fbbb37ab5527ed580b0e3eb8db06ce5e2` and
@@ -149,16 +155,16 @@ return ctx.OpNMin(type, ctx.OpNMax(type, value, zero), one);
 ```
 
   Plain float min/max and floating CAS helpers use OpNMin/OpNMax.
-- [ ] Extend adopted emitted-instruction regressions to f16x2 as well as f32x2
+- [x] Extend adopted emitted-instruction regressions to f16x2 as well as f32x2
   atomic loops and all planned min/max/clamp profiles. Demonstrate red results
   with isolated mutations restoring original FMin/FMax/FClamp. Qualify comments
   to match evidence: documented NVIDIA behavior is not a direct guest capture.
 - [x] Adopt the parent's pipeline cache version 54 advance.
-- [ ] Correct migration to choose the newest compatible environment plus
+- [x] Correct migration to choose the newest compatible environment plus
   matching used list (v53 then v52), preserving originals/existing destination.
   Existing cached environments must retranslate through the corrected emitter.
   Treat driver-blob compatibility separately and test its chosen migration policy.
-- [ ] Validate generated SPIR-V using spirv-val when available; run floating,
+- [x] Validate generated SPIR-V using spirv-val when available; run floating,
   storage-alignment and pipeline-cache regressions, and commit with attribution.
 
 ## Task 4: #323 fragment component masks, including no exports

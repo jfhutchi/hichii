@@ -17,8 +17,8 @@ Id Decorate(EmitContext& ctx, IR::Inst* inst, Id op) {
     return op;
 }
 
-// Maxwell's FMNMX and .SAT return the non-NaN operand (NaN saturates to 0). FMin/FMax/FClamp leave
-// NaN undefined and AMD's Windows compiler passes it through, so use the NaN-defined N variants.
+// Follow NVIDIA's documented min/max and saturation NaN behavior (NaN saturates to 0).
+// This is not direct guest-capture evidence. FMin/FMax/FClamp leave NaN undefined; use N variants.
 Id Clamp(EmitContext& ctx, Id type, Id value, Id zero, Id one) {
     return ctx.OpNMin(type, ctx.OpNMax(type, value, zero), one);
 }
