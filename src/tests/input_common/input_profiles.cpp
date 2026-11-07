@@ -22,7 +22,8 @@ public:
           path{std::filesystem::temp_directory_path() /
                fmt::format("lichii-input-profiles-{}", std::random_device{}())},
           global_players{Settings::values.players.GetValue(true)},
-          using_global{Settings::values.players.UsingGlobal()} {
+          using_global{Settings::values.players.UsingGlobal()},
+          configuring_global{Settings::IsConfiguringGlobal()} {
         REQUIRE(std::filesystem::create_directory(path));
         Common::FS::SetEdenPath(Common::FS::EdenPath::ConfigDir, path);
         Settings::values.players.SetGlobal(false);
@@ -30,6 +31,7 @@ public:
         Settings::values.players.GetValue(true) = {};
         Settings::values.players.GetValue() = {};
         Settings::values.players.SetGlobal(true);
+        Settings::SetConfiguringGlobal(false);
     }
 
     ~ConfigDirectory() {
@@ -37,6 +39,7 @@ public:
         Settings::values.players.SetGlobal(false);
         Settings::values.players.GetValue() = custom_players;
         Settings::values.players.SetGlobal(using_global);
+        Settings::SetConfiguringGlobal(configuring_global);
         Common::FS::SetEdenPath(Common::FS::EdenPath::ConfigDir, original);
         std::error_code error;
         std::filesystem::remove_all(path, error);
@@ -47,6 +50,7 @@ public:
     const std::array<Settings::PlayerInput, 10> global_players;
     std::array<Settings::PlayerInput, 10> custom_players;
     const bool using_global;
+    const bool configuring_global;
 };
 
 void SetBindings(Settings::PlayerInput& player, int key) {
@@ -169,6 +173,57 @@ TEST_CASE("Profile operations resolve handheld separately from player one", "[in
     const auto names = reopened.GetInputProfileNames();
     CHECK(std::ranges::find(names, players[handheld].profile_name) != names.end());
     CHECK(std::ranges::find(names, players[desktop].profile_name) != names.end());
+}
+
+TEST_CASE("Global handheld profile loads retain handheld style for single Joy-Con profiles",
+          "[input_profiles]") {
+    ConfigDirectory directory;
+    InputProfiles profiles;
+    auto style = Settings::ControllerType::LeftJoycon;
+    SECTION("Left Joy-Con") {}
+    SECTION("Right Joy-Con") {
+        style = Settings::ControllerType::RightJoycon;
+    }
+
+    Settings::SetConfiguringGlobal(true);
+    auto& players = Settings::values.players.GetValue();
+    SetBindings(players[0], 65);
+    players[0].controller_type = style;
+    REQUIRE(profiles.CreateProfile("single-joycon", 0));
+    const auto saved = players[0];
+
+    SetBindings(players[0], 99);
+    players[0].controller_type = Settings::ControllerType::ProController;
+    players[0].profile_name = "desktop";
+    const auto desktop = players[0];
+    SetBindings(players[8], 66);
+    players[8].controller_type = Settings::ControllerType::Handheld;
+    REQUIRE(profiles.LoadProfile("single-joycon", InputProfiles::GetPlayerIndex(0, true)));
+    CHECK(players[8].controller_type == Settings::ControllerType::Handheld);
+    CHECK(players[8].connected);
+    CHECK(players[8].profile_name == "single-joycon");
+    CHECK(players[8].buttons == saved.buttons);
+    CHECK(players[8].analogs == saved.analogs);
+    CHECK(players[8].motions == saved.motions);
+    CHECK(players[0].profile_name == desktop.profile_name);
+    CHECK(players[0].controller_type == desktop.controller_type);
+    CHECK(players[0].connected == desktop.connected);
+    CHECK(players[0].buttons == desktop.buttons);
+    CHECK(players[0].analogs == desktop.analogs);
+    CHECK(players[0].motions == desktop.motions);
+
+    REQUIRE(profiles.LoadProfile("single-joycon", 0));
+    CHECK(players[0].controller_type == style);
+    CHECK(players[0].buttons == saved.buttons);
+
+    Settings::SetConfiguringGlobal(false);
+    Settings::values.players.SetGlobal(false);
+    auto& custom = Settings::values.players.GetValue()[8];
+    custom.controller_type = Settings::ControllerType::Handheld;
+    REQUIRE(profiles.LoadProfile("single-joycon", 8));
+    CHECK(custom.controller_type == style);
+    CHECK(custom.buttons == saved.buttons);
+    CHECK(custom.profile_name == "single-joycon");
 }
 
 TEST_CASE("Deleting a profile clears matching identities while preserving bindings",

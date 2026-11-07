@@ -183,8 +183,12 @@ void Config::ReadPlayerValues(const std::size_t player_index) {
             ReadIntegerSetting(std::string(player_prefix).append("type"),
                                u8(Settings::ControllerType::ProController)));
 
-        if (controller == Settings::ControllerType::LeftJoycon ||
-            controller == Settings::ControllerType::RightJoycon) {
+        constexpr std::size_t handheld_index = 8;
+        const bool keep_handheld = player_index == handheld_index &&
+                                   player.controller_type == Settings::ControllerType::Handheld;
+        // Keep the UI on handheld so its loaded bindings remain on the active controller.
+        if (!keep_handheld && (controller == Settings::ControllerType::LeftJoycon ||
+                               controller == Settings::ControllerType::RightJoycon)) {
             player.controller_type = controller;
         }
     } else {

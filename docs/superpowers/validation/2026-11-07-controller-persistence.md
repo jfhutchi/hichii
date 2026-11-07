@@ -108,7 +108,7 @@ Results:
 
 - Full GUI executable linked successfully, including the affected configuration
   UI and QtConfig units. CLI and main test executables also rebuilt successfully.
-- Controller profile tests after review follow-up: **7 cases, 164 assertions, all passed**. Coverage
+- Controller profile tests after quality follow-up: **8 cases, 208 assertions, all passed**. Coverage
   includes the production active-slot resolver and P1/handheld isolation,
   create/load/save selection, profile-list reopening, fresh-process config/profile
   reload, keyboard and gamepad button packages, GUID/port, analog deadzone/range,
@@ -165,6 +165,47 @@ The follow-up passes **7/7 structural checks** and **7 cases / 164 assertions** 
 real config executable. The GUI executable links successfully with the affected
 per-game configuration unit compiled. No main full-suite rerun was needed for this
 UI/test-only follow-up; the recorded baseline run remains unchanged.
+
+## Quality review follow-up: handheld style
+
+The corrected handheld load destination exposed a second UI transition: global
+InputProfile loading intentionally applies a saved Left/Right Joy-Con style.
+`ConfigureInputPlayer::LoadConfiguration` then updates the controller-type combo,
+whose callback switches the active controller from handheld slot 8 to player-one
+slot 0. The loaded mappings and profile identity would remain behind in slot 8.
+
+The narrow policy now retains Handheld style when a global InputProfile is loaded
+into slot 8 while that destination is already Handheld. Saved bindings and identity
+still apply. Loading Left/Right styles into other global destinations, loading
+per-game profile types, and loading ordinary global/per-game configuration remain
+unchanged. This keeps the active controller and loaded mappings on the same slot
+without transferring settings between controllers.
+
+A real QtConfig/InputProfiles regression saves each Left and Right profile from
+P1, loads it into a connected Handheld destination, and checks Handheld style,
+connection, all mappings, identity, and unchanged P1. It also checks that the saved
+style still applies to a non-handheld global destination and a custom destination.
+The test fixture restores `Settings::IsConfiguringGlobal` as well as both banks.
+
+```powershell
+& ./.local-tools/build.ps1 -BuildDirectory build-amd-gui `
+  -Targets input_profile_tests -LogName controller-handheld-style-red
+& build-amd-gui/bin/input_profile_tests.exe 'Global handheld profile loads*' `
+  --reporter compact --out .local-tools/controller-handheld-style-red-tests.log
+& ./.local-tools/build.ps1 -BuildDirectory build-amd-gui `
+  -Targets input_profile_tests,yuzu,config_tests -LogName controller-handheld-style-final
+& build-amd-gui/bin/input_profile_tests.exe --reporter compact `
+  --out .local-tools/controller-handheld-style-green-tests.log
+& 'C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/ctest.exe' `
+  --test-dir build-amd-gui -R '^(input_profile_tests|config_tests)$' --output-on-failure
+python -I tools/nx2/test_controller_profile_wiring.py -v
+```
+
+Before the policy fix, both sections failed at the Handheld-style assertion:
+Left style `2` and Right style `3` replaced Handheld `4` (**44 assertions, 2 failed**).
+After the fix, the complete controller/config executable passes **8 cases / 208
+assertions**. GUI production compilation/link succeeds, targeted CTest passes
+**2/2**, and all **7 structural checks** still pass. No GUI was launched.
 
 ## Limits
 
