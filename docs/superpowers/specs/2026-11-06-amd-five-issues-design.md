@@ -1,7 +1,8 @@
 # Five emulator fixes, with Radeon and Ryzen priority
 
-Status: proceeding under the user's November 7 instruction to continue after the
-review checkpoint, including the documented baseline exceptions.
+Status: explicitly approved by the user. The subsequent controller-persistence
+requirement replaces #401 as the fifth fix and takes priority after #357.
+Proceeding with the documented baseline exceptions.
 
 ## Scope and isolation
 
@@ -118,25 +119,32 @@ ordering across all cutoff ties and iteration orders, zero candidates, maximum
 frame values, and preservation of active/in-flight objects. Repeated-area live
 frame-time checks are a separate requirement from policy unit tests.
 
-### 5. Unrequested texture-cache bookkeeping: Lichii #401
+### 5. Controller settings, key bindings and profile persistence
 
-Report: https://github.com/zortos293/Lichii/issues/401
+The user's additional priority replaces the proposed #401 texture bookkeeping
+change. #401 is deferred and is not part of this five-fix branch.
 
-`debug_stats` starts true and is only updated inside the TC_LOG-gated report.
-Without the variable, normal gameplay continually inserts diagnostic shape keys
-and never clears them. This is unnecessary CPU/memory work on Ryzen and other
-processors; no isolated FPS benefit has been measured.
+The existing global QtConfig path already serializes controller style, connection
+state, buttons, analog sticks and motion, including device GUID/port packages and
+explicitly cleared `[empty]` bindings. Preserve that format and establish actual
+save/destroy/reopen coverage rather than assuming the serializer is absent.
 
-Adapt https://github.com/zortos293/Lichii/pull/428 at
-`f39d00ca9a040114c5bc911ccce9c3b27d4d1d9e`: default off, initialize before image
-creation from both TC_LOG presence and the HW_GPU debug log level, and preserve
-the periodic update/clear behavior. Detailed collection is off without explicit
-request, including when the log level is Debug but TC_LOG is absent.
+The source audit identified inconsistent active-slot selection: profile creation
+and loading use player 0 in handheld mode, while saving correctly uses handheld
+slot 8. Profile-selection lookup also uses player 0, and successful global profile
+operations do not record the selected profile name. Use one active-slot resolver
+for create/load/save/selection and remember identity only after successful
+operations. Successful deletion must clear matching remembered identities while
+preserving bindings. Preserve per-game override and global inheritance behavior.
 
-Verify all four environment/log-level combinations, first-window behavior,
-guarded shape-map insertion, and production compilation. A focused structural
-regression is acceptable if constructing the complete runtime is impractical;
-do not label it as a measured performance test.
+Regressions must exercise the production active-slot path and actual QtConfig /
+InputProfiles disk round trips in temporary config directories, including a fresh
+process. Cover distinct player-0 and handheld bindings, selected profile identity,
+keyboard and gamepad packages, explicit clears, failure behavior and per-game
+isolation. No visible emulator window or user's live config is needed. Compile the
+affected GUI production units; configuration tests need no Qt6::Test dependency.
+Do not claim this proves every possible controller hot-plug or external launcher
+issue: document exactly which persistence defects are reproduced and corrected.
 
 ## Upstream prerequisite and alternatives
 

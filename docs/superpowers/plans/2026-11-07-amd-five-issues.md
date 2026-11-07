@@ -2,7 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Follow the tasks below in order, with spec and code review after each implementation stage.
 
-**Goal:** Correct Lichii #357, #325, #323, #293 and #401, validate their source behavior, and publish the tested changes to jfhutchi/hichii.
+**Goal:** Correct Lichii #357, #325, #323, #293 and controller/profile persistence,
+validate their source behavior, and publish the tested changes to jfhutchi/hichii.
+The user's additional controller requirement replaces #401 and is implemented
+immediately after the completed #357 fix. Remaining numbered tasks retain their
+original identifiers for traceability.
 
 **Architecture:** Keep the fork's existing behavior and integrate the reviewed upstream prerequisite at its pinned revision. Apply attributed, bounded ports with real production-path regressions; retain a separate portable test package and distinguish automated verification from hardware gameplay results.
 
@@ -63,6 +67,11 @@ consumed_cache == write_position && BackQuiet()
 - [x] Commit the merge with conflict-resolution rationale and upstream references.
 
 ## Task 2: #357 read-only table storage reach
+
+Completed in f7e87d594d and c77eed544a. Independent spec and quality reviews
+passed. Focused buffer regressions: 364 assertions / 18 cases. Full suite:
+788 / 791 cases, with the exact three baseline failures unchanged. Production
+Vulkan/OpenGL consumers compiled. Radeon gameplay remains unverified.
 
 Files: src/video_core/buffer_cache/buffer_cache.h;
 src/video_core/renderer_vulkan/vk_buffer_cache.{h,cpp};
@@ -147,31 +156,32 @@ src/tests/video_core/pipeline_eviction_policy.cpp; affected CMakeLists.txt.
   the 9000-frame floor, legacy Switch1 and MoltenVK behavior, and transitions.
 - [ ] Run cache/build/eviction tests, compile vk_pipeline_cache.cpp and commit.
 
-## Task 6: #401 texture debug bookkeeping
+## Task 6: Controller/profile persistence (prioritized after task 2)
 
-Files: src/video_core/texture_cache/{texture_cache.h,texture_cache_base.h};
-tools/nx2/test_texture_debug_stats.py if a structural regression is needed.
+Files: src/yuzu/configuration/{configure_input_player.*,input_profiles.*};
+an integrated active-slot helper if needed; focused temporary-config tests and
+their CMake wiring. Preserve the existing serialized binding format.
 
-- [ ] Capture the failing source behavior with a focused structural check,
-  covering constructor initialization before image creation and guarded shape
-  insertion. Do not fake a full Vulkan runtime just to test this simple policy.
-- [ ] Adapt PR428 atf39d00ca9a040114c5bc911ccce9c3b27d4d1d9e:
+- [ ] Demonstrate the active handheld slot mismatch and missing selected-profile
+  identity with regressions that fail before the fix.
+- [ ] Use one active-slot resolver for profile create/load/save/selection. Update
+  identity only on success, clear deleted identities without resetting bindings,
+  and preserve global/per-game isolation and existing cancellation semantics.
+- [ ] Exercise actual QtConfig/InputProfiles save/destroy/reopen and fresh-process
+  round trips for gamepad GUID/port, keyboard keys, sticks, motion, style,
+  connection state and `[empty]` clears. Keep all files in temporary directories.
+- [ ] Compile affected GUI production paths and run focused tests without starting
+  the emulator or touching the user's configuration. Record limitations, obtain
+  independent spec then quality review, and commit.
 
-```cpp
-bool debug_stats{};
-// At the start of TextureCache's constructor, before any image creation:
-debug_stats = std::getenv("EDEN_NX2_TC_LOG") != nullptr &&
-              Common::Log::IsLevelEnabled(Common::Log::Class::HW_GPU,
-                                          Common::Log::Level::Debug);
-```
-
-- [ ] Check all environment/log-level combinations and existing periodic
-  reset/clear behavior. Compile the actual texture-cache consumers and commit.
+Canceled: the original #401 texture-debug-bookkeeping task is replaced by this
+user-requested fix. No #401 implementation is included or counted.
 
 ## Task 7: Full verification, review and separate package
 
 - [ ] Run the tests and CLI production build, then a separate bundled-Qt GUI
-  build (YUZU_TESTS=OFF because bundled Qt lacks Qt6Test). Use 12 jobs.
+  build and focused controller-config tests. The bundled Qt lacks Qt6Test; keep
+  compatibility tests requiring that optional component distinct. Use 12 jobs.
 - [ ] Run the full suite and targeted regressions; compare exact baseline failure
   identities, not just counts. Resolve any new failures. Preserve all evidence.
 - [ ] Request independent spec review, address gaps, then independent code-quality
