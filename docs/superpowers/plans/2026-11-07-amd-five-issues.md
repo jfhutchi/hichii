@@ -10,11 +10,15 @@
 
 ## Task 1: Reviewed upstream prerequisite
 
+Completed in afb21b57873ac1ab2cd6fe479c2da1f3df762382. Independent spec and
+quality reviews passed. Full suite 784/787, three exact baseline failures;
+focused regressions 101 assertions/9 cases, ten fresh processes passed.
+
 Files: README.md; src/core/core.cpp; src/common/fs/*; src/yuzu/user_data_migration.cpp;
 src/video_core/{buffer_cache/buffer_cache.h,engines/kepler_compute.h,gpu_split.cpp,gpu_split.h,gpu_thread.cpp};
 src/tests/video_core/{gpu_split_idle.cpp,buffer_cache_ports.cpp}; src/tests/CMakeLists.txt.
 
-- [ ] Integrate the reviewed pinned prerequisite. The November 7 head aff8b2569
+- [x] Integrate the reviewed pinned prerequisite. The November 7 head aff8b2569
   changes 233 files with approximately 88 conflicts, including unrelated shader-lab,
   audio, CI and unbounded pipeline-retention changes. It was surveyed, not adopted
   wholesale. The approved design explicitly pins the smaller prerequisite:
@@ -23,7 +27,7 @@ src/tests/video_core/{gpu_split_idle.cpp,buffer_cache_ports.cpp}; src/tests/CMak
 git merge --no-commit --no-ff 0857e8b4a792ac99b87af6bb6f329127aa7df683
 ```
 
-- [ ] Resolve only the four known conflicts. Keep fork README branding and its
+- [x] Resolve only the four known conflicts. Keep fork README branding and its
   GPU split batching, profiling, seq_cst wake handshake and shutdown notification.
   Preserve automatic upstream guest-RAM release and migration changes, reviewing
   their interaction with portable paths. In kepler_compute.h add:
@@ -36,13 +40,13 @@ bool IsDlssDispatch() const { return native_mode && dlss_chain.active; }
   the separate indirect-table argument. In WriteMemory guard the entire branch
   that can inline-upload or download GPU bytes with GpuSplit::OwnsScheduler().
   Retain upstream MarkGpuThread/OwnsScheduler and quiet-state publication.
-- [ ] Implement the real held-idle-hook regression before resolving the Drain
+- [x] Implement the real held-idle-hook regression before resolving the Drain
   behavior; use a friend fixture following existing test-access patterns, not a
   stand-alone fake lock. The test starts the real split worker in a scoped system
   context, holds its idle callback with a condition variable, consumes ring work,
   calls Drain on the producer, and asserts Drain cannot complete before the
   callback is released. All failure paths must release/join worker threads.
-- [ ] Require both Drain return paths to satisfy:
+- [x] Require both Drain return paths to satisfy:
 
 ```cpp
 consumed_cache == write_position && BackQuiet()
@@ -51,12 +55,12 @@ consumed_cache == write_position && BackQuiet()
   After consumed catches up, request the idle hook once if not quiet. Publish
   quiet only after callback completion. Keep Backoff's consumed-only sleep check;
   sleeping on quiet without a corresponding wake would deadlock.
-- [ ] Cover no-hook/empty, requested-hook, new-work and stop/wakeup behavior;
+- [x] Cover no-hook/empty, requested-hook, new-work and stop/wakeup behavior;
   unauthorized CPU/service callers cannot execute either WriteMemory scheduler
   path. Check DLSS versus ordinary native versus table-pointer sizing.
-- [ ] Build production and tests, run targeted split/buffer/DLSS tests and the
+- [x] Build production and tests, run targeted split/buffer/DLSS tests and the
   full suite, comparing the exact three preexisting failures in the baseline.
-- [ ] Commit the merge with conflict-resolution rationale and upstream references.
+- [x] Commit the merge with conflict-resolution rationale and upstream references.
 
 ## Task 2: #357 read-only table storage reach
 
