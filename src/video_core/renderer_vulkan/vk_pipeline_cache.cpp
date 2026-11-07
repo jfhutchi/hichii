@@ -23,6 +23,7 @@
 #include "common/scope_exit.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
+#include "common/memory_detect.h"
 #include "common/thread_worker.h"
 #include "core/core.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
@@ -39,6 +40,7 @@
 #include "video_core/renderer_vulkan/async_draw_policy.h"
 #include "video_core/renderer_vulkan/fixed_pipeline_state.h"
 #include "video_core/renderer_vulkan/maxwell_to_vk.h"
+#include "video_core/renderer_vulkan/pipeline_eviction_policy.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
 #include "video_core/renderer_vulkan/pipeline_shader_emission.h"
 #include "video_core/renderer_vulkan/pipeline_statistics.h"
@@ -720,6 +722,7 @@ std::unordered_map<u64, u8> LoadUsedPipelines(const std::filesystem::path& path,
 // memory built before the game started; the list is only saved at exit or after two minutes, so a
 // boot that ran out of memory never saved one and the next boot did the same.
 constexpr size_t MaxPipelinesWithoutUsedList = 3000;
+static_assert(MaxPipelinesWithoutUsedList == MinSwitch2PipelineBudget);
 
 // EDEN_NX2_PRELOAD_ALL_PIPELINES=1 builds every cached pipeline at boot, as before.
 bool PreloadAllPipelines() {
@@ -728,6 +731,14 @@ bool PreloadAllPipelines() {
         return value != nullptr && value[0] == '1';
     }();
     return all;
+}
+
+// Retain an eighth of physical RAM at roughly 450 KiB per driver pipeline, with
+// the same minimum as the boot limit. This is a lookup budget, not a hard RAM cap.
+size_t Switch2PipelineBudget() {
+    static const size_t budget =
+        Switch2PipelineBudgetFromBytes(Common::GetMemInfo().TotalPhysicalMemory);
+    return budget;
 }
 } // Anonymous namespace
 
@@ -1159,20 +1170,46 @@ void PipelineCache::EvictUnusedPipelines() {
     if (device.IsMoltenVK()) {
         return;
     }
-    // Each built pipeline holds ~0.45 MB of driver memory and none was ever destroyed, so it grew
-    // with every place a session went (title 1: 1,500 on its title screen alone). One unused for
-    // this long is destroyed; it takes 2-3 ms to build again from the driver's pipeline cache.
-    constexpr u64 EvictAfterFrames = 9000;
+    // Keep the stale-age floor even above the budget: retiring recently used pipelines
+    // caused AMD device loss in the upstream retention experiments.
+    constexpr u64 EvictAfterFrames = PipelineEvictAfterFrames;
     if (frame_count <= EvictAfterFrames) {
         return;
     }
-    const u64 cutoff = frame_count - EvictAfterFrames;
+    const auto evictable = [this](const GraphicsPipeline* pipeline) {
+        return pipeline &&
+               IsPipelineEvictionCandidate(frame_count, pipeline->LastUse(), true,
+                                           pipeline == current_pipeline, pipeline->IsBuilt());
+    };
+    const bool switch2 = Settings::CurrentProgramIsSwitch2();
+    const size_t budget = switch2 ? Switch2PipelineBudget() : 0;
+    if (switch2 && graphics_cache.size() <= budget) {
+        return;
+    }
+    std::vector<u64> last_uses;
+    last_uses.reserve(graphics_cache.size());
+    for (const auto& [key, pipeline] : graphics_cache) {
+        if (evictable(pipeline.get())) {
+            last_uses.push_back(pipeline->LastUse());
+        }
+    }
+    const size_t max_evicted =
+        PipelineEvictionQuota(switch2, graphics_cache.size(), budget, last_uses.size());
+    if (max_evicted == 0) {
+        return;
+    }
+    std::optional<OldestPipelineSelection> oldest;
+    // Rebuilding Switch 2 shaders translates them on the GPU thread. Retain up to
+    // the budget, then select exactly the oldest eligible excess, including ties.
+    if (switch2) {
+        oldest.emplace(last_uses, max_evicted);
+    }
     const u64 tick = scheduler.CurrentTick();
     size_t evicted = 0;
-    for (auto it = graphics_cache.begin(); it != graphics_cache.end();) {
+    for (auto it = graphics_cache.begin(); it != graphics_cache.end() && evicted < max_evicted;) {
         GraphicsPipeline* const pipeline = it->second.get();
-        if (pipeline == nullptr || pipeline == current_pipeline || !pipeline->IsBuilt() ||
-            pipeline->LastUse() >= cutoff) {
+        // Take() must only see candidates included in the selection.
+        if (!evictable(pipeline) || (oldest && !oldest->Take(pipeline->LastUse()))) {
             ++it;
             continue;
         }
@@ -1191,8 +1228,15 @@ void PipelineCache::EvictUnusedPipelines() {
             pipeline->ClearTransitions();
         }
     }
-    LOG_INFO(Render_Vulkan, "Evicted {} graphics pipelines unused for {} frames, {} left", evicted,
-             EvictAfterFrames, graphics_cache.size());
+    if (switch2) {
+        LOG_INFO(Render_Vulkan,
+                 "Evicted {} least recently used graphics pipelines unused for {} frames, "
+                 "over the budget of {}, {} left",
+                 evicted, EvictAfterFrames, budget, graphics_cache.size());
+    } else {
+        LOG_INFO(Render_Vulkan, "Evicted {} graphics pipelines unused for {} frames, {} left", evicted,
+                 EvictAfterFrames, graphics_cache.size());
+    }
 }
 
 /// Returns `pipeline` when it is built or the current draw must wait for it, and nullptr when the

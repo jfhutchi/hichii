@@ -203,16 +203,24 @@ assertions; structural 5/5; emitted dual-source SPIR-V 1/1; GUI CTest 4/4.
 Files: renderer_vulkan/{pipeline_eviction_policy.h,vk_pipeline_cache.cpp};
 src/tests/video_core/pipeline_eviction_policy.cpp; affected CMakeLists.txt.
 
-- [ ] Adapt PR313 at8ca6ee9e26c21cdc2658b6d03fc26e3d12497e4f. Exclude its
+- [x] Adapt PR313 at `8ca6ee9e26c21cdc2658b6d03fc26e3d12497e4f`. Exclude its
   unrelated all-title boot-failure-cache change. Preserve boot preload caps.
-- [ ] Add red regressions exercising under-budget retention and exact excess
+- [x] Add red regressions exercising under-budget retention and exact excess
   selection via the production policy, including cutoff ties in every order,
   zero candidates, maximum frames, current/building/recent exclusion and GPU-safe
   deferred destruction. Demonstrate that age-only eviction fails retention.
-- [ ] Keep Switch2 pipelines below max(3000, physicalRAM/8/(450*1024)). Above
+- [x] Retain Switch2 lookup entries at/below max(3000, physicalRAM/8/(450*1024)). Above
   budget retire only min(excess, eligible stale count) oldest candidates; retain
   the 9000-frame floor, legacy Switch1 and MoltenVK behavior, and transitions.
-- [ ] Run cache/build/eviction tests, compile vk_pipeline_cache.cpp and commit.
+- [x] Run cache/build/eviction tests, compile vk_pipeline_cache.cpp and commit.
+
+Evidence: `../validation/2026-11-07-pipeline-retention.md`. Age-only RED has the
+two intended under/equal-budget failures. Final retention tests pass 9 cases /
+997 assertions; focused cache/build/retention passes 37 / 1,559; full main passes
+873 / 70,028,114 with zero failures. Structural retirement/policy wiring passes
+5/5, both CLI/GUI production builds pass, and GUI CTest passes 4/4. The quota is
+soft when eligible stale entries are insufficient; structural tests do not execute
+live GPU completion. Independent spec and quality review precede publication.
 
 ## Task 6: Controller/profile persistence (prioritized after task 2)
 
