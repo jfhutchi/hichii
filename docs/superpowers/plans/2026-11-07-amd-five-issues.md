@@ -12,6 +12,35 @@ original identifiers for traceability.
 
 **Tech Stack:** C++20, Vulkan/OpenGL, Catch2 3.13, clang-cl 23.1.5 with VS2022 MSVC14.44, CMake/Ninja, Python.
 
+## User-directed latest Lichii synchronization
+
+The user subsequently requested the latest upstream releases while controller
+review was underway. Keep the user's fork and integrate its direct Lichii parent;
+do not replace it with Eglantine or discard the local fixes.
+
+- [x] Fetch and inspect direct parent `lichii/nx2` at
+  `71268a75e806a92f55c21f2577aaa19c6e9d6692`. This adds 59 parent commits since
+  the starting fork revision. Its latest published release is named build 95
+  (tag build-94); the fetched source also includes subsequent commits.
+- [x] Create separate `integration/lichii-latest` worktree at
+  `C:/Users/JHutc/Desktop/hichii-upstream-sync`. No emulator installation changes.
+- [ ] Finish controller spec/quality review, fast-forward the integration worktree
+  to the reviewed controller commit, then merge the pinned direct-parent head.
+  Resolve the six surveyed conflicts by preserving tested fog allocation/descriptor
+  bounds and backend limits, combining the unsigned-literal and prerequisite test
+  changes, and retaining the split-worker scheduler ownership/idle guarantees.
+- [ ] Review and build the merged result, independently review conflict resolutions,
+  then fast-forward `fix/amd-five-issues` to the verified integration commit.
+  Compare full-suite failures with the new parent: its video/NUP fixes may remove
+  the three previously accepted failures. Do not retain stale baseline exceptions.
+- [ ] Reconcile tasks 3 and 4 with upstream's already-merged NaN PR432 and
+  fragment-output PR353. Preserve those adopted fixes, add missing regressions and
+  migration corrections, and record provenance rather than porting duplicate code.
+
+Eglantine `upstream/nx2` was re-fetched and remains `aff8b2569b9`. Its much broader
+divergent integration remains outside this direct-parent synchronization. The new
+user request supersedes the earlier decision to defer the direct Lichii update.
+
 ## Task 1: Reviewed upstream prerequisite
 
 Completed in afb21b57873ac1ab2cd6fe479c2da1f3df762382. Independent spec and
