@@ -3038,13 +3038,24 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
         const DAddr cpu_end = Common::AlignUp(*device_addr + size, Core::DEVICE_PAGESIZE);
 
         // Page tracking rounds the end up, but the actual descriptor must still fit the limit.
-        const u64 binding_size = is_written ? u64{prefix} + size : cpu_end - *aligned_device_addr;
-        const u64 binding_limit =
-            read_only_table ? max_storage_range : u64{(std::numeric_limits<u32>::max)()};
+        u64 binding_size = is_written ? u64{prefix} + size : cpu_end - *aligned_device_addr;
+        if (read_only_table) {
+            binding_size = (std::min)(binding_size, max_storage_range);
+        }
+        // CreateBuffer rounds both ends to cache pages and stores the allocation size in u32.
+        constexpr u64 max_cache_size =
+            Common::AlignDown(u64{(std::numeric_limits<u32>::max)()}, CACHING_PAGESIZE);
+        const u64 cache_prefix = *aligned_device_addr % CACHING_PAGESIZE;
+        if (binding_size > max_cache_size - cache_prefix) {
+            LOG_WARNING(HW_GPU,
+                        "Storage buffer for cbuf index {} at {:#x}+{:#x} exceeds cache size limit",
+                        cbuf_index, *aligned_device_addr, binding_size);
+            return NULL_BINDING;
+        }
         return Binding{
             .device_addr = *aligned_device_addr,
             .gpu_addr = aligned_gpu_addr,
-            .size = static_cast<u32>((std::min)(binding_size, binding_limit)),
+            .size = static_cast<u32>(binding_size),
             .buffer_id = BufferId{},
         };
     }();

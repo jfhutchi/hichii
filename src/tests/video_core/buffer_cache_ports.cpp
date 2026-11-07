@@ -89,6 +89,7 @@ struct Runtime {
         return DownloadStagingBuffer(size);
     }
     void ClearBuffer(Buffer& buffer, u32 offset, u64 size, u32 value) {
+        ++buffer_clears;
         REQUIRE(offset + size <= buffer.bytes.size());
         REQUIRE(size % sizeof(value) == 0);
         for (u64 i = 0; i < size; i += sizeof(value)) {
@@ -153,6 +154,7 @@ struct Runtime {
     u64 storage_range{1ULL << 30};
     u32 allocations{}, downloads{}, uploads{}, finishes{}, waits{};
     u32 host_read_barriers{};
+    u32 buffer_clears{};
     u64 upload_bytes{}, waited_tick{};
     std::unique_ptr<Buffer> staging;
     std::vector<u8> stream;
@@ -212,6 +214,9 @@ struct BufferCacheTestAccess {
     }
     static Buffer& Get(Cache& cache, BufferId id) {
         return cache.slot_buffers[id];
+    }
+    static BufferId Resolve(Cache& cache, const Binding& binding) {
+        return cache.FindBuffer(binding.device_addr, binding.size, false);
     }
     static void Dirty(Cache& cache, DAddr address, u64 size) {
         cache.memory_tracker.MarkRegionAsGpuModified(address, size);
@@ -461,9 +466,26 @@ TEST_CASE("Read-only table bindings saturate wide layouts before narrowing",
     CHECK(unaligned.size == 1U << 30);
     CHECK(f.Bind(false, true).size == (8U << 20) + 0xf00);
     CHECK(f.Bind(true, false, true).size == (8U << 20) + 0x23);
+    const bool written = GENERATE(false, true);
+    CAPTURE(written);
+    // The largest cache-page-representable interval remains intact without allocating it.
+    f.Descriptor(base + 0x123, 0xfffefeddULL);
+    CHECK(f.Bind(written).size == 0xfffeff00U);
+    f.Descriptor(base + 0x123, 0xfffefedeULL);
+    CHECK(f.Bind(written).size == 0);
     f.Descriptor(base + 0x123, 0xfffffff0ULL);
-    CHECK(f.Bind().size == 0xffffffffU);
-    CHECK(f.Bind(true).size == 0xffffffffU);
+    const auto unsupported = f.Bind(written);
+    const auto& resolved = Access::Get(*f.cache, Access::Resolve(*f.cache, unsupported));
+    REQUIRE(u64{resolved.Offset(unsupported.device_addr)} + unsupported.size <= resolved.SizeBytes());
+    CHECK(unsupported.size == 0);
+    CHECK(f.runtime.buffer_clears == 0);
+    // A small, representable interval still reaches the real cache allocation path.
+    f.Descriptor(base + 0x123, 0x10000);
+    const auto binding = f.Bind();
+    const auto& buffer = Access::Get(*f.cache, Access::Resolve(*f.cache, binding));
+    CHECK(binding.size == 0x10f00);
+    CHECK(u64{buffer.Offset(binding.device_addr)} + binding.size <= buffer.SizeBytes());
+    CHECK(f.runtime.buffer_clears == 1);
 }
 
 TEST_CASE("Read-only table bindings stop at holes and discontinuous device mappings",
