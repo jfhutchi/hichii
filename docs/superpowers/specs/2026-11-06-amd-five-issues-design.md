@@ -134,8 +134,9 @@ frame-time checks are a separate requirement from policy unit tests.
 
 ### 5. Controller settings, key bindings and profile persistence
 
-The user's additional priority replaces the proposed #401 texture bookkeeping
-change. #401 is deferred and is not part of this five-fix branch.
+The user's additional priority replaces the proposed separate #401 texture
+bookkeeping task. The later requested latest-parent merge includes upstream's
+#401 correction incidentally; it is not a sixth selected fix or a separate port.
 
 The existing global QtConfig path already serializes controller style, connection
 state, buttons, analog sticks and motion, including device GUID/port packages and
