@@ -82,10 +82,14 @@ BlitColor's private pipeline, adapting that state-restoration hunk from #353.
 
 Tests exercise every guest component mask, all attachments, absent versus
 present fragment programs, partial/dual outputs, repeated bindings, transitions
-in both directions, and unrelated dirty flags. Include the integrated sequence
-no-export guest draw, internal color blit, same guest pipeline again, with no
-guest register change, so tests check state restoration beyond the helper policy.
-The affected production Vulkan
+in both directions, and unrelated dirty flags. Exercise unchanged no-export state
+before and after the real StateTracker command-buffer invalidation, with no guest
+register change. A focused structural regression must cover the exact internal
+BlitColor overload's top-level scheduler invalidation after command recording;
+mutation checks must reject missing or worker-lambda invalidation. These checks
+cover state restoration beyond the helper policy without pretending to execute
+the complete Vulkan draw/blit/draw path. That path requires GPU resources under
+the current constructors and remains a live validation scenario. The affected production Vulkan
 translation units must compile as well as the policy tests.
 
 ### 4. Repeat area-entry shader stutter on Ryzen: Lichii #293

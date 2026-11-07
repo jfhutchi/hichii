@@ -134,9 +134,12 @@ src/tests/video_core/fragment_color_mask.cpp; both affected CMakeLists.txt.
 - [ ] Use UpdateDynamicStates' existing draw_pipeline argument rather than
   querying CurrentGraphicsPipeline again. A DrawTexture internal blit must not
   inherit guest no-export masks.
-- [ ] Adapt only PR353's BlitColor state-invalidation correction. Exercise the
-  production mask/state path through no-export guest -> internal blit -> same
-  guest state without register changes, in addition to helper tests.
+- [ ] Adapt only PR353's BlitColor state-invalidation correction. Exercise real
+  StateTracker invalidation between unchanged no-export states, in addition to
+  helper tests. Add a focused structural regression for the exact BlitColor
+  overload's top-level invalidation after recording, with negative mutations for
+  missing, worker-lambda and wrong-overload calls. Record that these tests do not
+  execute the full Vulkan draw/blit/draw path, which requires device resources.
 - [ ] Run mask/state regressions and compile all affected production units;
   commit with original PR attribution and recorded runtime limitations.
 
