@@ -41,18 +41,25 @@ matching symptom but is not a sixth fix or independently proven duplicate.
 
 Report: https://github.com/zortos293/Lichii/issues/325
 
-SPIR-V FMin/FMax/FClamp leave NaN behavior undefined. Use NMin/NMax for the guest's
-floating min/max behavior and compose clamp as NMin(NMax(value, low), high),
+SPIR-V FMin/FMax/FClamp leave NaN behavior undefined. Use NMin/NMax for NaN-defined
+lowering supported by documented NVIDIA behavior, while recording that direct
+Maxwell/Ampere capture confirmation remains absent. Compose clamp as
+NMin(NMax(value, low), high),
 including float atomic compare-exchange helpers. Adapt the reviewed source and
 tests from https://github.com/zortos293/Lichii/pull/432, heads
 `d3697a8fbbb37ab5527ed580b0e3eb8db06ce5e2` and
 `4437a12176299f71fe957d21d30ded4b5f9b5261`, preserving original attribution.
 
 Exercise emitted SPIR-V for 32/64-bit min/max, saturation, clamp, both clamp
-profiles, and float atomic loops; validate generated modules where possible.
+profiles, and f16x2/f32x2 float atomic loops; validate generated modules where possible.
+Confirm the misaligned-vector-read correction from Lichii #295 is already present;
+the NaN port previously caused Radeon washout without that prerequisite.
 Advance the pipeline cache version and audit migration so shader environments
-are retranslated rather than reusing obsolete generated output. Preserve prior
-files and copy only structurally compatible caches. This fix contains NaN spread;
+are retranslated rather than reusing obsolete generated output. Choose the newest
+compatible environment and used-list source, including v53 rather than hardcoding
+v52, and preserve originals and any existing destination. Test environment
+retranslation separately from deliberate driver-blob migration; these cache types
+are not interchangeable merely because their headers can be rewritten. This fix contains NaN spread;
 it does not replace the independent pointer-range correction in issue 1.
 
 ### 3. Radeon mountain-ridge color artifacts: Lichii #323
@@ -66,11 +73,17 @@ Adapt https://github.com/zortos293/Lichii/pull/339 at
 fragment color exports are absent, in both static and EDS3 dynamic state. When
 pipeline exports change, invalidate blending and color-mask state even if guest
 registers did not change. Preserve absent fragment stages, partial outputs,
-dual-source behavior, and depth/stencil operations.
+dual-source behavior, and depth/stencil operations. Use the already selected
+pipeline passed to UpdateDynamicStates instead of querying/building it again.
+Treat DrawTexture as an internal blit and invalidate scheduler state after
+BlitColor's private pipeline, adapting that state-restoration hunk from #353.
 
 Tests exercise every guest component mask, all attachments, absent versus
 present fragment programs, partial/dual outputs, repeated bindings, transitions
-in both directions, and unrelated dirty flags. The affected production Vulkan
+in both directions, and unrelated dirty flags. Include the integrated sequence
+no-export guest draw, internal color blit, same guest pipeline again, with no
+guest register change, so tests check state restoration beyond the helper policy.
+The affected production Vulkan
 translation units must compile as well as the policy tests.
 
 ### 4. Repeat area-entry shader stutter on Ryzen: Lichii #293
@@ -84,14 +97,20 @@ and therefore relevant to the friend's Ryzen/Radeon setup, without promising a
 measured frame-rate gain on that unavailable machine.
 
 Port the bounded Switch 2 retention policy from
-https://github.com/zortos293/Lichii/pull/313, rather than the unbounded retention
+https://github.com/zortos293/Lichii/pull/313 at
+`8ca6ee9e26c21cdc2658b6d03fc26e3d12497e4f`, rather than the unbounded retention
 in https://github.com/Djihads80/Eglantine/pull/696. Keep pipelines while under a
 host-memory-derived budget (one eighth of physical RAM using the port's measured
 450 KiB estimate, with its existing boot-limit floor). Above budget, evict only
-the required number of oldest eligible stale pipelines. Keep current, building,
+min(excess count, eligible stale count) oldest eligible pipelines. The budget may
+therefore be exceeded while pipelines are young, building, or current. Keep current, building,
 and recently used pipelines; retain deferred GPU-safe destruction and transition
 cleanup. Preserve legacy Switch 1 and MoltenVK behavior. The budget is a heuristic
 count, not a guarantee of actual AMD driver memory consumption.
+
+Do not port #313's unrelated all-title boot-failure-cache hunk. Current/building
+pipelines remain in the lookup cache; retired pipelines remain alive until
+`scheduler.IsFree(tick)` permits destruction.
 
 Tests verify under-budget retention, exact excess counts, age eligibility,
 ordering across all cutoff ties and iteration orders, zero candidates, maximum
