@@ -34,7 +34,7 @@ pool limits and the existing OpenGL path, with its own queried limit.
 Tests cover reads beyond 64/128 MiB, small device limits, unaligned pointers,
 rounded final descriptor sizes, mapping discontinuities, lengths above u32, null
 bindings, and unchanged writable pools. Reported RX 9070 XT measurements support
-the mechanism; local Radeon gameplay verification remains required. #422 has a
+the mechanism; direct Radeon gameplay results remain unverified on this PC. #422 has a
 matching symptom but is not a sixth fix or independently proven duplicate.
 
 ### 2. Radeon NaN haze and green water: Lichii #325
@@ -173,9 +173,13 @@ builds, targeted tests, full relevant suite, whitespace checks, and independent
 spec/code review. Build a separate Windows test package for the owner; never
 replace the working installation.
 
-The local machine has an RTX 4080 SUPER and Intel CPU. Its tests can establish
-code validity and NVIDIA regressions, not Radeon pixel correctness or Ryzen
-frame times. Record exact unverified hardware scenarios, including Hyrule Field
+The local machine has an RTX 4080 SUPER and Intel CPU. Owning Ryzen or Radeon
+hardware is not a prerequisite for implementing, testing, and publishing the five
+source corrections. Completion evidence must demonstrate each corrected code
+defect with meaningful regressions and production builds, then verify the fork
+update. Hardware-specific gameplay claims require separate hardware evidence.
+Local tests can establish code validity and NVIDIA regressions, not Radeon pixel
+correctness or Ryzen frame times. Record exact unverified hardware scenarios, including Hyrule Field
 fog, Kokiri-to-Deku-to-Kokiri haze, mountain ridges, and repeated area entry.
 Use an owner-launched capture-enabled test session if needed; do not inject into
 the existing emulator. Keep the overall goal active until the selected fixes,
