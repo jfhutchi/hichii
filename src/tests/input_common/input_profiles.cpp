@@ -283,6 +283,37 @@ TEST_CASE("Per-game profile bindings override only the selected player", "[input
     CheckBindings(global_players[8], 66);
 }
 
+TEST_CASE("A failed custom profile load preserves identity bindings and connection state",
+          "[input_profiles]") {
+    ConfigDirectory directory;
+    InputProfiles profiles;
+    auto& global = Settings::values.players.GetValue(true)[2];
+    SetBindings(global, 90);
+    global.profile_name = "global";
+    Settings::values.players.SetGlobal(false);
+    auto& custom = Settings::values.players.GetValue()[2];
+    SetBindings(custom, 65);
+    REQUIRE(profiles.CreateProfile("portable", 2));
+    custom.profile_name = "previous";
+    custom.connected = false;
+    custom.controller_type = Settings::ControllerType::LeftJoycon;
+    const auto previous = custom;
+    const auto profile_path = directory.path / "input" / "portable.ini";
+    REQUIRE(std::filesystem::remove(profile_path));
+    REQUIRE(std::filesystem::create_directory(profile_path));
+
+    CHECK_FALSE(profiles.LoadProfile("portable", 2));
+    CHECK_FALSE(Settings::values.players.UsingGlobal());
+    CHECK(custom.profile_name == previous.profile_name);
+    CHECK(custom.connected == previous.connected);
+    CHECK(custom.controller_type == previous.controller_type);
+    CHECK(custom.buttons == previous.buttons);
+    CHECK(custom.analogs == previous.analogs);
+    CHECK(custom.motions == previous.motions);
+    CHECK(global.profile_name == "global");
+    CheckBindings(global, 90);
+}
+
 int main(int argc, char* argv[]) {
     QCoreApplication app{argc, argv};
     if (argc == 3 && (std::string_view{argv[1]} == "--write-profiles" ||

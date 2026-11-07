@@ -108,7 +108,7 @@ Results:
 
 - Full GUI executable linked successfully, including the affected configuration
   UI and QtConfig units. CLI and main test executables also rebuilt successfully.
-- Controller profile tests: **6 cases, 146 assertions, all passed**. Coverage
+- Controller profile tests after review follow-up: **7 cases, 164 assertions, all passed**. Coverage
   includes the production active-slot resolver and P1/handheld isolation,
   create/load/save selection, profile-list reopening, fresh-process config/profile
   reload, keyboard and gamepad button packages, GUID/port, analog deadzone/range,
@@ -123,12 +123,55 @@ Results:
   Total assertions: 69,808,836, with those same 3 failures. Catch exit code: 42.
 - Whitespace and new-test clang-format checks passed.
 
+## Spec review follow-up
+
+The first implementation's real config tests exercised the shared slot resolver,
+but could not catch an accidental raw `player_index` argument in a QWidget caller.
+`tools/nx2/test_controller_profile_wiring.py` adds seven explicitly structural
+checks: all four UI operations must use the shared resolver, the resolver must read
+the actual emulated Npad ID, and the per-game caller must guard failed loads before
+assigning identity, connection state, or reloading its controller. The script strips
+comments and literals before examining function bodies. It does not instantiate a
+QWidget or claim to exercise the complete dialog.
+
+The per-game caller also assigned identity before loading and ignored failure.
+It now checks `LoadProfile`, logs the failed profile name and player number, and
+continues before changing connection state or reloading. InputProfiles assigns the
+identity only on success. A new real InputProfiles test demonstrates failed custom
+bank loads preserve identity, all binding arrays, style, disconnected state, and the
+global bank.
+
+Red evidence uses old production source read from Git into temporary files, without
+rewriting tracked files. The following reproduces it with ignored source copies:
+
+```powershell
+git show '9bb48385d0a^:src/yuzu/configuration/configure_input_player.cpp' |
+  Set-Content -Encoding utf8 .local-tools/controller-old-player.cpp
+git show '9bb48385d0a^:src/yuzu/configuration/configure_input_per_game.cpp' |
+  Set-Content -Encoding utf8 .local-tools/controller-old-per-game.cpp
+python -I tools/nx2/test_controller_profile_wiring.py `
+  --player-source-file .local-tools/controller-old-player.cpp `
+  --per-game-source-file .local-tools/controller-old-per-game.cpp -v
+python -I tools/nx2/test_controller_profile_wiring.py -v
+& ./.local-tools/build.ps1 -BuildDirectory build-amd-gui `
+  -Targets input_profile_tests,yuzu -LogName controller-review-followup
+& build-amd-gui/bin/input_profile_tests.exe --reporter compact `
+  --out .local-tools/controller-review-followup-tests.log
+```
+
+Results: the pre-fix source fails **7/7 structural checks**. The first implementation
+passes the five active-slot wiring checks but fails the two per-game failure checks.
+The follow-up passes **7/7 structural checks** and **7 cases / 164 assertions** in the
+real config executable. The GUI executable links successfully with the affected
+per-game configuration unit compiled. No main full-suite rerun was needed for this
+UI/test-only follow-up; the recorded baseline run remains unchanged.
+
 ## Limits
 
 This verifies the identified profile identity/slot persistence defects and real
 config serialization, not every possible controller or hardware driver issue.
-No QWidget dialog, physical controller, or running game was exercised. UI signal
-wiring and its shared resolver integration were compiled and source reviewed.
+No QWidget dialog, physical controller, or running game was exercised. UI caller
+wiring is covered by compiled integration, source review, and structural checks.
 Existing config writes are not replaced with an atomic-file protocol; successful
 identity assignment reflects the checked file operation, while disk-level recovery
 after a partially written file remains outside this change. Existing QtTest

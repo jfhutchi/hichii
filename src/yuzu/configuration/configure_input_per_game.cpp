@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2022 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/logging.h"
 #include "common/settings.h"
 #include "core/core.h"
 #include "frontend_common/config.h"
@@ -81,9 +82,12 @@ void ConfigureInputPerGame::LoadConfiguration() {
             continue;
         }
         auto& player = Settings::values.players.GetValue()[player_index];
-        player.profile_name = profile_name;
         // Read from the profile into the custom player settings
-        profiles->LoadProfile(profile_name, player_index);
+        if (!profiles->LoadProfile(profile_name, player_index)) {
+            LOG_ERROR(Config, "Failed to load input profile '{}' for player {}", profile_name,
+                      player_index + 1);
+            continue;
+        }
         // Make sure the controller is connected
         player.connected = true;
 
