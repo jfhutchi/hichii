@@ -1,6 +1,7 @@
 # Five emulator fixes, with Radeon and Ryzen priority
 
-Status: concrete design for user review; implementation has not started.
+Status: proceeding under the user's November 7 instruction to continue after the
+review checkpoint, including the documented baseline exceptions.
 
 ## Scope and isolation
 
