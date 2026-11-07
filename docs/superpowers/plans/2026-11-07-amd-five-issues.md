@@ -225,8 +225,9 @@ Final focused cache/build/retention passes 38 / 1,583; full main passes 874 /
 70,029,655 with zero failures. Structural retirement/policy wiring passes 6/6,
 both CLI/GUI production builds pass, and GUI CTest passes 4/4. The quota is soft
 when eligible stale entries are insufficient; structural tests do not execute
-live GPU completion. Independent spec and quality reviews are repeated for the
-snapshot correction before publication.
+live GPU completion. Independent spec and quality reviews passed again for the
+snapshot correction before publication; the final cross-task source review also
+approved `3fc0a6ad257` without actionable findings.
 
 ## Task 6: Controller/profile persistence (prioritized after task 2)
 
@@ -258,25 +259,29 @@ parent changes are now included by the user-requested latest Lichii merge.
 
 ## Task 7: Full verification, review and separate package
 
-- [ ] Run the tests and CLI production build, then a separate bundled-Qt GUI
+- [x] Run the tests and CLI production build, then a separate bundled-Qt GUI
   build and focused controller-config tests. The bundled Qt lacks Qt6Test; keep
   compatibility tests requiring that optional component distinct. Use 12 jobs.
-- [ ] Run the full suite and targeted regressions; compare exact baseline failure
+- [x] Run the full suite and targeted regressions; compare exact baseline failure
   identities, not just counts. Resolve any new failures. Preserve all evidence.
-- [ ] Request independent spec review, address gaps, then independent code-quality
+- [x] Request independent spec review, address gaps, then independent code-quality
   review. Review the complete diff and git diff --check, including merge effects.
-- [ ] Package a separate portable build with its own data folder. Do not copy
+- [x] Package a separate portable build with its own data folder. Do not copy
   game data or keys into public artifacts; do not launch/stop the owner's emulator.
-- [ ] Record exact build hashes, source commits, fixes, tests and remaining
+- [x] Record exact build hashes, source commits, fixes, tests and remaining
   hardware-only scenarios in docs/superpowers/validation/2026-11-07-five-fixes.md.
 
 ## Task 8: Update the user's fork
 
-- [ ] Verify fork identity/push permission, compare remote fix-branch state, and
+- [x] Verify fork identity/push permission, compare remote fix-branch state, and
   push the tested branch without force. If a GitHub App connector cannot push git
   objects, use authenticated git transport; never print credentials.
-- [ ] Verify the remote branch SHA equals the tested local commit. Provide source
+- [x] Verify the remote branch SHA equals the tested local commit. Provide source
   and local package links. Do not post to upstream issues or close reports.
-- [ ] Reconcile every checkbox against authoritative evidence. Mark the overall
+- [x] Reconcile every checkbox against authoritative evidence. Mark the overall
   goal complete only when all five source fixes, verification and fork update are
   established. Report Radeon gameplay/60FPS as unverified where untested.
+
+Final independent verification, package hashes and publication evidence are in
+`../validation/2026-11-07-five-fixes.md`. The built source is `3fc0a6ad257`;
+closing documentation does not change production source.
