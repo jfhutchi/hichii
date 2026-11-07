@@ -1,8 +1,10 @@
 # Five emulator fixes, with Radeon and Ryzen priority
 
 Status: explicitly approved by the user. The subsequent controller-persistence
-requirement replaces #401 as the fifth fix and takes priority after #357.
-Proceeding with the documented baseline exceptions.
+requirement replaces #401 as the fifth fix. The later request to pull the latest
+Lichii supersedes the original selective-port approach where those changes are
+now present in the direct parent. Adopt and validate them without duplicating or
+undoing upstream fixes. Reassess baseline exceptions after the latest merge.
 
 ## Scope and isolation
 
@@ -51,6 +53,9 @@ including float atomic compare-exchange helpers. Adapt the reviewed source and
 tests from https://github.com/zortos293/Lichii/pull/432, heads
 `d3697a8fbbb37ab5527ed580b0e3eb8db06ce5e2` and
 `4437a12176299f71fe957d21d30ded4b5f9b5261`, preserving original attribution.
+Latest Lichii already includes this work as `2e69168aae8` (PR432); adopt that
+commit through the requested direct-parent merge, then extend verification and
+correct its remaining cache migration gap rather than porting it twice.
 
 Exercise emitted SPIR-V for 32/64-bit min/max, saturation, clamp, both clamp
 profiles, and f16x2/f32x2 float atomic loops; validate generated modules where possible.
@@ -68,17 +73,21 @@ it does not replace the independent pointer-range correction in issue 1.
 
 Report: https://github.com/zortos293/Lichii/issues/323
 
-A present fragment program with no color exports currently leaves guest color
-write masks enabled. Undefined Vulkan outputs then corrupt bound attachments.
-Adapt https://github.com/zortos293/Lichii/pull/339 at
-`64d9962846b48a377f98321df5d7c861fd89c14a`: suppress color writes only when all
-fragment color exports are absent, in both static and EDS3 dynamic state. When
-pipeline exports change, invalidate blending and color-mask state even if guest
-registers did not change. Preserve absent fragment stages, partial outputs,
-dual-source behavior, and depth/stencil operations. Use the already selected
-pipeline passed to UpdateDynamicStates instead of querying/building it again.
-Treat DrawTexture as an internal blit and invalidate scheduler state after
-BlitColor's private pipeline, adapting that state-restoration hunk from #353.
+A present fragment program with no color exports left guest color write masks
+enabled. Undefined Vulkan outputs then corrupt bound attachments. The original
+selective-port design used PR339's narrow no-exports policy. The user-requested
+latest Lichii update already includes the broader upstream PR353 at
+`79c151694a6`: static and EDS3 dynamic masks intersect guest masks with the
+fragment program's exported components for each render target. Retain this
+adopted component policy, including suppression when all exports are absent;
+do not replace it with a duplicate narrow implementation.
+
+When pipeline exports change, record new dynamic masks even if guest registers
+did not change. Verify partial and dual-source outputs and unchanged depth/stencil
+operations against the adopted policy. Use the already selected pipeline passed
+to UpdateDynamicStates. Treat DrawTexture as an internal blit with unrestricted
+internal output masks, and retain PR353's scheduler invalidation after BlitColor's
+private pipeline.
 
 Tests exercise every guest component mask, all attachments, absent versus
 present fragment programs, partial/dual outputs, repeated bindings, transitions
