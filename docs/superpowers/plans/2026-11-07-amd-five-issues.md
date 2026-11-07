@@ -24,18 +24,25 @@ do not replace it with Eglantine or discard the local fixes.
   (tag build-94); the fetched source also includes subsequent commits.
 - [x] Create separate `integration/lichii-latest` worktree at
   `C:/Users/JHutc/Desktop/hichii-upstream-sync`. No emulator installation changes.
-- [ ] Finish controller spec/quality review, fast-forward the integration worktree
+- [x] Finish controller spec/quality review, fast-forward the integration worktree
   to the reviewed controller commit, then merge the pinned direct-parent head.
   Resolve the six surveyed conflicts by preserving tested fog allocation/descriptor
   bounds and backend limits, combining the unsigned-literal and prerequisite test
   changes, and retaining the split-worker scheduler ownership/idle guarantees.
-- [ ] Review and build the merged result, independently review conflict resolutions,
-  then fast-forward `fix/amd-five-issues` to the verified integration commit.
-  Compare full-suite failures with the new parent: its video/NUP fixes may remove
-  the three previously accepted failures. Do not retain stale baseline exceptions.
-- [ ] Reconcile tasks 3 and 4 with upstream's already-merged NaN PR432 and
+- [x] Review and build the merged result on `integration/lichii-latest`. Merge
+  `549bbeb7942` retains local fixes; `41fd0500fe8` corrects the interaction between
+  guest-RAM restoration and upstream allocation validation. CLI and Qt GUI builds
+  pass, full main suite passes 855 cases / 69,930,850 assertions, focused buffer/
+  split tests pass 30 cases / 442 assertions, and four configuration/updater/SDL
+  CTest targets pass. The three prior video/NUP failures are gone; baseline is
+  zero failures. Evidence: `../validation/2026-11-07-latest-lichii.md`.
+- [ ] Complete independent integration spec/quality reviews, then fast-forward
+  `fix/amd-five-issues` to the verified integration commit. Source spec review
+  passed at `41fd0500fe8`; quality review and the root's final handoff remain.
+- [x] Reconcile tasks 3 and 4 with upstream's already-merged NaN PR432 and
   fragment-output PR353. Preserve those adopted fixes, add missing regressions and
-  migration corrections, and record provenance rather than porting duplicate code.
+  migration corrections in the still-open tasks below, and record provenance
+  rather than porting duplicate code. Reconciliation does not complete those tasks.
 
 Eglantine `upstream/nx2` was re-fetched and remains `aff8b2569b9`. Its much broader
 divergent integration remains outside this direct-parent synchronization. The new
@@ -130,40 +137,47 @@ src/video_core/pipeline_cache_files.h; renderer_vulkan/vk_pipeline_cache.cpp;
 src/tests/video_core/{spirv_nan_safe_min_max.cpp,pipeline_cache_files.cpp}; tests/CMakeLists.txt.
 
 - [ ] Confirm existing #295 VectorViewIsExact and global scalar-word fallback.
-- [ ] Import tests from PR432 commit4437a12176299f71fe957d21d30ded4b5f9b5261
-  before its production changes; extend them to f16x2 as well as f32x2 atomic loops.
-  Run the emitted-instruction tests red against original FMin/FMax/FClamp.
-- [ ] Port attributed commits d3697a8fbbb37ab5527ed580b0e3eb8db06ce5e2 and
-  4437a12176299f71fe957d21d30ded4b5f9b5261, adapting overlapping test lists:
+- [x] Adopt the existing PR432 production changes and tests through direct-parent
+  commit `2e69168aae8`, preserving ancestry and attribution to reviewed source
+  commits `d3697a8fbbb37ab5527ed580b0e3eb8db06ce5e2` and
+  `4437a12176299f71fe957d21d30ded4b5f9b5261`. Do not port the same code twice:
 
 ```cpp
 return ctx.OpNMin(type, ctx.OpNMax(type, value, zero), one);
 ```
 
-  Plain float min/max and floating CAS helpers use OpNMin/OpNMax. Qualify comments
+  Plain float min/max and floating CAS helpers use OpNMin/OpNMax.
+- [ ] Extend adopted emitted-instruction regressions to f16x2 as well as f32x2
+  atomic loops and all planned min/max/clamp profiles. Demonstrate red results
+  with isolated mutations restoring original FMin/FMax/FClamp. Qualify comments
   to match evidence: documented NVIDIA behavior is not a direct guest capture.
-- [ ] Advance cache version once; migrate newest compatible environment plus
+- [x] Adopt the parent's pipeline cache version 54 advance.
+- [ ] Correct migration to choose the newest compatible environment plus
   matching used list (v53 then v52), preserving originals/existing destination.
   Existing cached environments must retranslate through the corrected emitter.
   Treat driver-blob compatibility separately and test its chosen migration policy.
 - [ ] Validate generated SPIR-V using spirv-val when available; run floating,
   storage-alignment and pipeline-cache regressions, and commit with attribution.
 
-## Task 4: #323 no-export fragment masks
+## Task 4: #323 fragment component masks, including no exports
 
 Files: renderer_vulkan/{fragment_color_mask.h,vk_graphics_pipeline.cpp,
 vk_graphics_pipeline.h,vk_rasterizer.cpp,vk_rasterizer.h,blit_image.cpp};
 src/tests/video_core/fragment_color_mask.cpp; both affected CMakeLists.txt.
 
-- [ ] Import PR339 tests and production helper from
-  64d9962846b48a377f98321df5d7c861fd89c14a, then demonstrate the tests fail when
-  applying the old unconditional guest masks or omitting state transitions.
-- [ ] Port the narrow no-exports policy, preserving absent fragment stages and
-  partial/dual-source exports. Static and EDS3 paths share the tested policy.
-- [ ] Use UpdateDynamicStates' existing draw_pipeline argument rather than
-  querying CurrentGraphicsPipeline again. A DrawTexture internal blit must not
-  inherit guest no-export masks.
-- [ ] Adapt only PR353's BlitColor state-invalidation correction. Exercise real
+- [x] Adopt PR353 at `79c151694a6` through the requested direct-parent merge:
+  static and EDS3 dynamic masks intersect guest masks with exported components
+  per render target. Preserve this broader policy, including no-export suppression,
+  and its BlitColor state invalidation. Do not replace it with the earlier narrow
+  PR339 port at `64d9962846b48a377f98321df5d7c861fd89c14a`.
+- [ ] Add production-policy regressions covering all guest masks and attachments,
+  absent/present fragment stages, partial/dual-source exports and unchanged depth/
+  stencil behavior. Demonstrate failure when restoring unconditional guest masks
+  or omitting transitions; share the tested policy across static and EDS3 paths.
+- [ ] Verify UpdateDynamicStates uses the already selected pipeline for masks.
+  Cover internal DrawTexture's unrestricted output masks and transitions without
+  guest register changes, including repeated bindings and unrelated dirty flags.
+- [ ] Verify the adopted PR353 BlitColor state-invalidation correction. Exercise real
   StateTracker invalidation between unchanged no-export states, in addition to
   helper tests. Add a focused structural regression for the exact BlitColor
   overload's top-level invalidation after recording, with negative mutations for
@@ -190,24 +204,31 @@ src/tests/video_core/pipeline_eviction_policy.cpp; affected CMakeLists.txt.
 
 ## Task 6: Controller/profile persistence (prioritized after task 2)
 
+Completed in `9bb48385d0a`, `b89521f5536` and `2e7fcfdbed7`; independent spec and
+quality reviews passed before latest-parent integration. The merged controller
+tests pass 8 cases / 208 assertions and all 7 caller wiring checks pass. See
+`docs/superpowers/validation/2026-11-07-controller-persistence.md` for red/green,
+fresh-process and file-isolation evidence.
+
 Files: src/yuzu/configuration/{configure_input_player.*,input_profiles.*};
 an integrated active-slot helper if needed; focused temporary-config tests and
 their CMake wiring. Preserve the existing serialized binding format.
 
-- [ ] Demonstrate the active handheld slot mismatch and missing selected-profile
+- [x] Demonstrate the active handheld slot mismatch and missing selected-profile
   identity with regressions that fail before the fix.
-- [ ] Use one active-slot resolver for profile create/load/save/selection. Update
+- [x] Use one active-slot resolver for profile create/load/save/selection. Update
   identity only on success, clear deleted identities without resetting bindings,
   and preserve global/per-game isolation and existing cancellation semantics.
-- [ ] Exercise actual QtConfig/InputProfiles save/destroy/reopen and fresh-process
+- [x] Exercise actual QtConfig/InputProfiles save/destroy/reopen and fresh-process
   round trips for gamepad GUID/port, keyboard keys, sticks, motion, style,
   connection state and `[empty]` clears. Keep all files in temporary directories.
-- [ ] Compile affected GUI production paths and run focused tests without starting
+- [x] Compile affected GUI production paths and run focused tests without starting
   the emulator or touching the user's configuration. Record limitations, obtain
   independent spec then quality review, and commit.
 
 Canceled: the original #401 texture-debug-bookkeeping task is replaced by this
-user-requested fix. No #401 implementation is included or counted.
+user-requested fix. No separate #401 port is performed or counted; its incidental
+parent changes are now included by the user-requested latest Lichii merge.
 
 ## Task 7: Full verification, review and separate package
 
