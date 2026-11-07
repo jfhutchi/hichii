@@ -26,7 +26,7 @@ On Windows, extract the entire build archive and run **lichii.exe**. Only use ga
 
 ### Existing saves and settings
 
-The rebrand intentionally retains the existing Eden/Eglantine data directories and configuration keys. It does not move or delete saves, settings or shader caches. Back up your saves before testing experimental builds.
+New desktop installations use the Eglantine data directory (`eglantine`). Existing portable `user` directories still take priority. The desktop migration dialog can copy, move or link data from the legacy Eden directory; choose the operation explicitly and back up saves before migrating or testing experimental builds.
 
 ## Compatibility and issue reports
 

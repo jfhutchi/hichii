@@ -201,18 +201,26 @@ void GpuSplit::Publish() {
 
 void GpuSplit::Drain(DrainSite site) {
     consumed_cache = consumed.load(std::memory_order_acquire);
-    if (consumed_cache == write_position) {
+    if (consumed_cache == write_position && BackQuiet()) {
         return;
     }
     Publish();
     Nx2Profile::Scope scope{Nx2Profile::Zone::SplitDrain};
     const u64 start = Nx2Profile::Enabled() ? Nx2Profile::Ticks() : 0;
+    // The idle hook submits deferred work after publishing consumption.
+    bool hook_asked = false;
     for (u32 spins = 0;; ++spins) {
         consumed_cache = consumed.load(std::memory_order_acquire);
         if (consumed_cache == write_position) {
-            publish_every = 8;
-            Nx2Profile::AddDrain(site, start);
-            return;
+            if (BackQuiet()) {
+                publish_every = 8;
+                Nx2Profile::AddDrain(site, start);
+                return;
+            }
+            if (!hook_asked) {
+                RequestIdleHook();
+                hook_asked = true;
+            }
         }
         Backoff(spins, write_position);
     }
@@ -429,9 +437,16 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
                 Pause();
                 available = published.load(std::memory_order_acquire);
             }
-            if (available == read_position && idle_hook != nullptr) {
+            if (available == read_position) {
                 hook_requested.store(false, std::memory_order_seq_cst);
-                idle_hook(idle_argument);
+                // The front may already see everything consumed: Drain() waits for back_quiet
+                // too, so the deferred submit can't overlap whatever the front does next.
+                if (!back_quiet.load(std::memory_order_relaxed)) {
+                    if (idle_hook != nullptr) {
+                        idle_hook(idle_argument);
+                    }
+                    back_quiet.store(true, std::memory_order_release);
+                }
                 available = published.load(std::memory_order_acquire);
             }
             if (available == read_position) {
@@ -450,6 +465,8 @@ void GpuSplit::BackLoop(std::stop_token stop_token) {
             }
         }
         u64 last_store = read_position;
+        // Publish this before consumption so Drain also waits for the batch's idle hook.
+        back_quiet.store(false, std::memory_order_seq_cst);
         while (read_position != available) {
             const size_t index = read_position & RingMask;
             const size_t size =

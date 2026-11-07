@@ -12,6 +12,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "common/page_table.h"
+#include "common/scope_exit.h"
 #include "core/core.h"
 #include "core/device_memory.h"
 #include "core/hle/kernel/k_process.h"
@@ -22,6 +23,8 @@
 #include "video_core/buffer_cache/memory_tracker_base.h"
 #include "video_core/control/channel_state.h"
 #include "video_core/gpu.h"
+#include "video_core/macro.h"
+#include "video_core/nx2.h"
 #include "video_core/renderer_null/null_rasterizer.h"
 
 namespace {
@@ -81,6 +84,17 @@ struct Runtime {
     }
     Staging UploadStagingBuffer(u64 size) {
         return DownloadStagingBuffer(size);
+    }
+    void ClearBuffer(Buffer& buffer, u32 offset, u64 size, u32 value) {
+        REQUIRE(offset + size <= buffer.bytes.size());
+        REQUIRE(size % sizeof(value) == 0);
+        for (u64 i = 0; i < size; i += sizeof(value)) {
+            std::memcpy(buffer.bytes.data() + offset + i, &value, sizeof(value));
+        }
+    }
+    void CopyBuffer(Buffer& dst, Buffer& src, std::span<const VideoCommon::BufferCopy> copies,
+                    bool barrier) {
+        CopyBuffer(dst, &src, copies, barrier, false);
     }
     void CopyBuffer(Buffer* dst, Buffer& src, std::span<const VideoCommon::BufferCopy> copies,
                     bool) {
@@ -173,6 +187,14 @@ using Cache = VideoCommon::BufferCache<Policy>;
 namespace VideoCommon {
 
 struct BufferCacheTestAccess {
+    static Binding Compute(Cache& cache, BufferCacheChannelInfo& channel, bool written,
+                           u32 indirect_offset = ~0U) {
+        cache.channel_state = &channel;
+        cache.kepler_compute = &channel.kepler_compute;
+        cache.gpu_memory = &channel.gpu_memory;
+        cache.BindComputeStorageBuffer(0, 0, 0, written, indirect_offset);
+        return channel.compute_storage_buffers[0];
+    }
     static Binding Bind(Cache& cache, Tegra::MemoryManager& memory, GPUVAddr descriptor,
                         bool written = false, bool native = false, bool table = false) {
         cache.gpu_memory = &memory;
@@ -235,6 +257,16 @@ struct BufferCacheTestAccess {
 };
 
 } // namespace VideoCommon
+
+namespace Tegra::Engines {
+
+struct KeplerComputeTestAccess {
+    static void DlssActive(KeplerCompute& compute, bool active) {
+        compute.dlss_chain.active = active;
+    }
+};
+
+} // namespace Tegra::Engines
 
 namespace {
 
@@ -623,4 +655,91 @@ TEST_CASE("Downloads keep CPU writes collected and not yet applied", "[buffer_po
     REQUIRE(f.bytes[0x20ff7] == 0x34);
     REQUIRE(std::all_of(f.bytes + 0x20ff8, f.bytes + 0x21008, [](u8 b) { return b == 0xee; }));
     REQUIRE(f.bytes[0x21008] == 0x34);
+}
+
+TEST_CASE("CPU page writes never upload or download through the scheduler", "[buffer_ports][split_owner]") {
+    Fixture f;
+    const bool native = GENERATE(false, true);
+    const bool service_thread = GENERATE(false, true);
+    CAPTURE(native, service_thread);
+    const bool previous = Tegra::g_nx2_ampere.exchange(native);
+    SCOPE_EXIT { Tegra::g_nx2_ampere.store(previous); };
+    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
+    std::ranges::fill(Access::Get(*f.cache, id).bytes, 0x42);
+    Access::Dirty(*f.cache, 0x20000, 0x1000);
+    std::memset(f.bytes + 0x10100, 0xee, 16);
+    if (service_thread) {
+        std::jthread service{[&] { f.cache->WriteMemory(0x20100, 16, true); }};
+    } else {
+        f.cache->WriteMemory(0x20100, 16, true);
+    }
+    CHECK(f.runtime.uploads == 0);
+    CHECK(f.runtime.downloads == 0);
+    CHECK(f.runtime.finishes == 0);
+    CHECK(f.bytes[0x10000] == 0);
+    CHECK(f.bytes[0x10100] == 0xee);
+}
+
+TEST_CASE("Compute storage sizing is special only inside an active native DLSS dispatch",
+          "[buffer_ports][dlss_sizing]") {
+    Fixture f;
+    constexpr GPUVAddr base = 0x4000000;
+    f.memory->Map(base, 0x10000000, 80 << 20, Tegra::PTEKind::PITCH, true);
+    Tegra::Control::ChannelState state{0};
+    state.memory_manager = &*f.memory;
+    state.payload.emplace(f.system, *f.memory, state);
+    VideoCommon::BufferCacheChannelInfo channel{state};
+    auto& compute = channel.kepler_compute;
+    Tegra::MacroEngine macros{true};
+    const bool native = GENERATE(false, true);
+    compute.SetNativeMacroMode(native ? &macros : nullptr, {});
+    compute.launch_description.const_buffer_enable_mask.Assign(1);
+    compute.launch_description.const_buffer_config[0].address_low = 0x100000;
+    for (const bool dlss : {false, true, false}) {
+        CAPTURE(native, dlss);
+        Tegra::Engines::KeplerComputeTestAccess::DlssActive(compute, dlss);
+        f.Descriptor(base, 256);
+        CHECK(Access::Compute(*f.cache, channel, false).size ==
+              (native && dlss ? 8 << 20 : 4096));
+        f.Descriptor(base, (1ULL << 32) | 256);
+        CHECK(Access::Compute(*f.cache, channel, false).size == 8 << 20);
+        constexpr GPUVAddr table = 0x100100;
+        std::memcpy(f.bytes, &table, sizeof(table));
+        const u64 size = 256;
+        std::memcpy(f.bytes + 0x100, &base, sizeof(base));
+        std::memcpy(f.bytes + 0x108, &size, sizeof(size));
+        CHECK(Access::Compute(*f.cache, channel, false, 0).size == 64 << 20);
+        CHECK(Access::Compute(*f.cache, channel, true, 0).size ==
+              (native && dlss ? 8 << 20 : 256));
+    }
+}
+
+TEST_CASE("Scheduler owner page writes preserve neighboring GPU bytes", "[buffer_ports][split_owner]") {
+    Fixture f;
+    const bool native = GENERATE(false, true);
+    const bool previous = Tegra::g_nx2_ampere.exchange(native);
+    SCOPE_EXIT { Tegra::g_nx2_ampere.store(previous); };
+    const auto id = Access::Add(*f.cache, 0x20000, 0x10000);
+    std::ranges::fill(Access::Get(*f.cache, id).bytes, 0x42);
+    Access::Dirty(*f.cache, 0x20000, 0x1000);
+    std::memset(f.bytes + 0x10100, 0xee, 16);
+    std::jthread gpu_thread{[&] {
+        VideoCommon::GpuSplit::MarkGpuThread();
+        f.cache->WriteMemory(0x20100, 16, true);
+    }};
+    gpu_thread.join();
+    REQUIRE(f.bytes[0x10100] == 0xee);
+    if (native) {
+        REQUIRE(f.runtime.uploads == 1);
+        REQUIRE(f.runtime.downloads == 0);
+        const auto& buffer = Access::Get(*f.cache, id);
+        CHECK(buffer.bytes[0xff] == 0x42);
+        CHECK(buffer.bytes[0x100] == 0xee);
+        CHECK(buffer.bytes[0x110] == 0x42);
+    } else {
+        REQUIRE(f.runtime.uploads == 0);
+        REQUIRE(f.runtime.downloads == 2);
+        CHECK(f.bytes[0x100ff] == 0x42);
+        CHECK(f.bytes[0x10110] == 0x42);
+    }
 }

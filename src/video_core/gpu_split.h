@@ -76,6 +76,15 @@ public:
     [[nodiscard]] static bool OnBackThread() {
         return on_back_thread;
     }
+    /// Marks the calling thread as the GPU thread (the front, or the only one without the split).
+    static void MarkGpuThread() {
+        on_gpu_thread = true;
+    }
+    /// Whether the calling thread owns the Vulkan scheduler: the back while it runs, else the
+    /// GPU thread. Other threads (CPU cores, services) must not record or submit work.
+    [[nodiscard]] static bool OwnsScheduler() {
+        return Get().BackRunning() ? on_back_thread : on_gpu_thread;
+    }
     /// Called on the back before it sleeps waiting for work (the rasterizer submits deferred work).
     void SetIdleHook(void (*hook)(void*), void* argument) {
         idle_hook = hook;
@@ -85,7 +94,8 @@ public:
     [[nodiscard]] bool BackRunning() const {
         return back_running.load(std::memory_order_acquire);
     }
-    /// Any thread: has the back call the idle hook soon, between entries or at once if it sleeps.
+    /// Any thread: flushes pending idle work soon, between entries or when the back sleeps.
+    /// If the back is already quiet, its previous idle hook has completed that work.
     void RequestIdleHook() {
         hook_requested.store(true, std::memory_order_seq_cst);
         wake.fetch_add(1, std::memory_order_seq_cst);
@@ -256,12 +266,21 @@ private:
     // Back side.
     Tegra::Engines::EngineInterface* back_engine{};
 
+    /// Whether the back is done with the Vulkan scheduler until it gets more work: set after its
+    /// idle hook ran, cleared before it executes entries.
+    [[nodiscard]] bool BackQuiet() const {
+        return back_quiet.load(std::memory_order_acquire) ||
+               !back_running.load(std::memory_order_acquire);
+    }
+
     static GpuSplit instance;
     static inline thread_local bool on_back_thread{};
+    static inline thread_local bool on_gpu_thread{};
     void (*idle_hook)(void*){};
     void* idle_argument{};
     alignas(64) std::atomic<bool> hook_requested{};
     std::atomic<bool> back_running{};
+    std::atomic<bool> back_quiet{true};
 
     // 128 bytes: x86 spatial prefetchers pull 64-byte lines in pairs. back_waiting and wake are
     // always touched together by both threads, so they share a block.

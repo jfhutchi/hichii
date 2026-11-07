@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "common/page_table.h"
 #include "common/scope_exit.h"
@@ -44,8 +46,24 @@ struct GpuSplitTestAccess {
         return split.write_position;
     }
 
+    static bool Consumed(const GpuSplit& split) {
+        return split.consumed.load(std::memory_order_acquire) == split.write_position;
+    }
+
+    static bool Sleeping(const GpuSplit& split) {
+        return split.back_waiting.load(std::memory_order_acquire);
+    }
+
+    static bool HookRequested(const GpuSplit& split) {
+        return split.hook_requested.load(std::memory_order_acquire);
+    }
+
     static void Start(GpuSplit& split, Core::System& system) {
         Initialize(split, system);
+        Launch(split);
+    }
+
+    static void Launch(GpuSplit& split) {
         split.active = true;
         split.back_thread = std::jthread([&split](std::stop_token stop) { split.BackLoop(stop); });
     }
@@ -777,4 +795,228 @@ TEST_CASE("Split restart resets writer positions without replaying old releases"
         REQUIRE_FALSE(split.BackRunning());
         REQUIRE(Access::End(split) == 0);
     }
+}
+
+namespace {
+
+template <typename Predicate>
+bool AwaitSplit(Predicate predicate) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+    while (!predicate()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+struct HeldSplitHook {
+    std::mutex mutex;
+    std::condition_variable_any changed;
+    bool released{};
+    std::atomic<bool> armed{};
+    std::atomic<bool> entered{};
+    std::atomic<u32> calls{};
+
+    static void Run(void* argument) {
+        auto& hook = *static_cast<HeldSplitHook*>(argument);
+        ++hook.calls;
+        if (!hook.armed.load()) {
+            return;
+        }
+        std::unique_lock lock{hook.mutex};
+        hook.entered.store(true);
+        hook.changed.wait(lock, [&] { return hook.released; });
+    }
+
+    void Release() {
+        std::scoped_lock lock{mutex};
+        released = true;
+        changed.notify_all();
+    }
+};
+
+} // namespace
+
+TEST_CASE("Drain waits for the real worker idle hook after consuming the ring",
+          "[video_core][split_quiet]") {
+    using Access = VideoCommon::GpuSplitTestAccess;
+    const bool enter_drain_before_consumption = GENERATE(false, true);
+    ScopedSystemTestContext context;
+    Core::System system;
+    system.Initialize();
+    VideoCommon::GpuSplit split;
+    HeldSplitHook hook;
+    split.SetIdleHook(HeldSplitHook::Run, &hook);
+    Access::Start(split, system);
+    SCOPE_EXIT { hook.Release(); split.Stop(); };
+    REQUIRE(AwaitSplit([&] { return Access::Sleeping(split); }));
+    hook.armed.store(true);
+    split.Defer([] {});
+    if (!enter_drain_before_consumption) {
+        split.Publish();
+        REQUIRE(AwaitSplit([&] { return hook.entered.load(); }));
+        REQUIRE(Access::Consumed(split));
+    }
+    std::atomic<bool> draining{}, drained{};
+    std::jthread front{[&] {
+        draining.store(true);
+        split.Drain();
+        drained.store(true);
+    }};
+    SCOPE_EXIT { hook.Release(); front.join(); };
+    REQUIRE(AwaitSplit([&] { return draining.load() && hook.entered.load(); }));
+    // Give the front a chance to take either Drain return path while the hook is held.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{50};
+    while (!drained.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    CHECK_FALSE(drained.load());
+    CHECK(Access::Consumed(split));
+    hook.Release();
+    REQUIRE(AwaitSplit([&] { return drained.load(); }));
+}
+
+TEST_CASE("Drain completes empty and no-hook work and Stop wakes a sleeping worker",
+          "[video_core][split_quiet]") {
+    using Access = VideoCommon::GpuSplitTestAccess;
+    ScopedSystemTestContext context;
+    Core::System system;
+    system.Initialize();
+    VideoCommon::GpuSplit split;
+    Access::Start(split, system);
+    SCOPE_EXIT { split.Stop(); };
+    REQUIRE(AwaitSplit([&] { return Access::Sleeping(split); }));
+    split.Drain();
+    u32 executed{};
+    split.Defer([&] { ++executed; });
+    split.Drain();
+    REQUIRE(executed == 1);
+    REQUIRE(AwaitSplit([&] { return Access::Sleeping(split); }));
+    split.Stop();
+    REQUIRE_FALSE(split.BackRunning());
+}
+
+TEST_CASE("New work published during the idle hook cannot inherit the old quiet state",
+          "[video_core][split_quiet]") {
+    using Access = VideoCommon::GpuSplitTestAccess;
+    ScopedSystemTestContext context;
+    Core::System system;
+    system.Initialize();
+    VideoCommon::GpuSplit split;
+    HeldSplitHook hook;
+    split.SetIdleHook(HeldSplitHook::Run, &hook);
+    Access::Start(split, system);
+    SCOPE_EXIT { hook.Release(); split.Stop(); };
+    REQUIRE(AwaitSplit([&] { return Access::Sleeping(split); }));
+    hook.armed.store(true);
+    split.Defer([] {});
+    split.Publish();
+    REQUIRE(AwaitSplit([&] { return hook.entered.load(); }));
+    const u32 calls = hook.calls.load();
+    std::atomic<bool> executed{};
+    split.Defer([&] { executed.store(true); });
+    split.Publish();
+    hook.Release();
+    split.Drain();
+    REQUIRE(executed.load());
+    REQUIRE(hook.calls.load() > calls);
+}
+
+TEST_CASE("Requested idle hooks run between real worker entries before Drain returns",
+          "[video_core][split_quiet]") {
+    using Access = VideoCommon::GpuSplitTestAccess;
+    ScopedSystemTestContext context;
+    Core::System system;
+    system.Initialize();
+    VideoCommon::GpuSplit split;
+    HeldSplitHook entry, hook;
+    entry.armed.store(true);
+    hook.armed.store(true);
+    split.SetIdleHook(HeldSplitHook::Run, &hook);
+    // Queue before starting so the worker cannot enter the idle hook first.
+    Access::Initialize(split, system);
+    split.Defer([&] { HeldSplitHook::Run(&entry); });
+    std::atomic<bool> second{};
+    split.Defer([&] { second.store(true); });
+    split.Publish();
+    Access::Launch(split);
+    SCOPE_EXIT { entry.Release(); hook.Release(); split.Stop(); };
+    REQUIRE(AwaitSplit([&] { return entry.entered.load(); }));
+    split.RequestIdleHook();
+    entry.Release();
+    REQUIRE(AwaitSplit([&] { return hook.entered.load(); }));
+    CHECK_FALSE(second.load());
+    hook.Release();
+    split.Drain();
+    CHECK(second.load());
+}
+
+TEST_CASE("Only the live back or unsplit GPU thread owns the scheduler",
+          "[video_core][split_owner]") {
+    using Split = VideoCommon::GpuSplit;
+    using Access = VideoCommon::GpuSplitTestAccess;
+    ScopedSystemTestContext context;
+    Core::System system;
+    system.Initialize();
+    auto& split = Split::Get();
+    REQUIRE_FALSE(split.BackRunning());
+    CHECK_FALSE(Split::OwnsScheduler());
+    bool gpu_without_split{};
+    std::jthread gpu_before{[&] {
+        Split::MarkGpuThread();
+        gpu_without_split = Split::OwnsScheduler();
+    }};
+    gpu_before.join();
+    CHECK(gpu_without_split);
+    Access::Start(split, system);
+    SCOPE_EXIT { split.Stop(); };
+    REQUIRE(AwaitSplit([&] { return Access::Sleeping(split); }));
+    CHECK_FALSE(Split::OwnsScheduler());
+    bool back_owner{}, gpu_with_split{}, service_owner{};
+    split.Defer([&] { back_owner = Split::OwnsScheduler(); });
+    split.Drain();
+    std::jthread gpu_front{[&] {
+        Split::MarkGpuThread();
+        gpu_with_split = Split::OwnsScheduler();
+    }};
+    std::jthread service{[&] { service_owner = Split::OwnsScheduler(); }};
+    gpu_front.join();
+    service.join();
+    CHECK(back_owner);
+    CHECK_FALSE(gpu_with_split);
+    CHECK_FALSE(service_owner);
+    split.Stop();
+    std::jthread gpu_after{[&] {
+        Split::MarkGpuThread();
+        gpu_without_split = Split::OwnsScheduler();
+    }};
+    gpu_after.join();
+    CHECK(gpu_without_split);
+    CHECK_FALSE(Split::OwnsScheduler());
+}
+
+TEST_CASE("An already quiet worker acknowledges redundant idle requests without resubmitting",
+          "[video_core][split_quiet]") {
+    using Access = VideoCommon::GpuSplitTestAccess;
+    ScopedSystemTestContext context;
+    Core::System system;
+    system.Initialize();
+    VideoCommon::GpuSplit split;
+    HeldSplitHook hook;
+    split.SetIdleHook(HeldSplitHook::Run, &hook);
+    Access::Start(split, system);
+    SCOPE_EXIT { split.Stop(); };
+    split.Defer([] {});
+    split.Drain();
+    REQUIRE(AwaitSplit([&] { return Access::Sleeping(split); }));
+    const u32 calls = hook.calls.load();
+    REQUIRE(calls >= 1);
+    split.RequestIdleHook();
+    REQUIRE(AwaitSplit([&] {
+        return !Access::HookRequested(split) && Access::Sleeping(split);
+    }));
+    split.Drain();
+    CHECK(hook.calls.load() == calls);
 }
