@@ -309,10 +309,8 @@ GraphicsPipeline::GraphicsPipeline(
     fragment_has_color0_output = stage_infos[NUM_STAGES - 1].stores_frag_color[0];
     // The guest leaves render target components the fragment shader doesn't output untouched,
     // while Vulkan writes undefined values to them (AMD writes garbage), so they are masked out.
-    for (size_t rt = 0; rt < Maxwell::NumRenderTargets; ++rt) {
-        color_output_mask |= u32{stage_infos[NUM_STAGES - 1].frag_color_components[rt]}
-                             << (rt * 4);
-    }
+    color_output_mask =
+        PackFragmentColorOutputMask(stage_infos[NUM_STAGES - 1].frag_color_components);
     const auto any_written = [](const auto& descriptors) {
         return std::ranges::any_of(descriptors, [](const auto& desc) { return desc.is_written; });
     };
@@ -1099,7 +1097,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         for (size_t i = 0; i < mask_table.size(); ++i) {
             write_mask |= mask[i] ? mask_table[i] : 0;
         }
-        write_mask &= ColorOutputMask(index);
+        write_mask = FragmentColorWriteMask(write_mask, color_output_mask, index);
         cb_attachments.push_back({
             .blendEnable = blend.enable != 0,
             .srcColorBlendFactor = MaxwellToVK::BlendFactor(blend.SourceRGBFactor()),

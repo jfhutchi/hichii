@@ -3090,13 +3090,12 @@ void RasterizerVulkan::UpdateBlending(Tegra::Engines::Maxwell3D::Regs& regs,
     // The write mask also excludes components the fragment shader doesn't output, so it has to be
     // recorded again whenever the bound pipeline outputs a different set of components.
     const u32 color_output_mask = pipeline ? pipeline->ColorOutputMask() : ~0U;
-    const bool color_output_changed = color_output_mask != last_color_output_mask;
-    if (!state_tracker.TouchBlending() && !color_output_changed) {
+    const auto update = fragment_color_mask_state.Update(color_output_mask, state_tracker);
+    if (!update.blending) {
         return;
     }
 
-    if (state_tracker.TouchColorMask() || color_output_changed) {
-        last_color_output_mask = color_output_mask;
+    if (update.color_mask) {
         std::array<VkColorComponentFlags, Maxwell::NumRenderTargets> setup_masks{};
         for (size_t index = 0; index < Maxwell::NumRenderTargets; index++) {
             const auto& mask = regs.color_mask[regs.color_mask_common ? 0 : index];
@@ -3113,7 +3112,7 @@ void RasterizerVulkan::UpdateBlending(Tegra::Engines::Maxwell3D::Regs& regs,
             if (mask.A) {
                 current |= VK_COLOR_COMPONENT_A_BIT;
             }
-            current &= (color_output_mask >> (index * 4)) & 0xF;
+            current = FragmentColorWriteMask(current, color_output_mask, index);
         }
         scheduler.Record([setup_masks](vk::CommandBuffer cmdbuf) {
             cmdbuf.SetColorWriteMaskEXT(0, setup_masks);

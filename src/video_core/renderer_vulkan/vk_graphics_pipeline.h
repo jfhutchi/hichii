@@ -20,6 +20,7 @@
 #include "shader_recompiler/shader_info.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/renderer_vulkan/fixed_pipeline_state.h"
+#include "video_core/renderer_vulkan/fragment_color_mask.h"
 #include "video_core/renderer_vulkan/pipeline_build.h"
 #include "video_core/renderer_vulkan/pipeline_helper.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
@@ -119,7 +120,7 @@ public:
 
     /// Color components of a render target the fragment shader writes, as VkColorComponentFlags
     VkColorComponentFlags ColorOutputMask(size_t render_target) const noexcept {
-        return (color_output_mask >> (render_target * 4)) & 0xF;
+        return FragmentColorWriteMask(0xF, color_output_mask, render_target);
     }
 
     /// Color components the fragment shader writes, 4 bits per render target

@@ -178,21 +178,25 @@ src/tests/video_core/fragment_color_mask.cpp; both affected CMakeLists.txt.
   per render target. Preserve this broader policy, including no-export suppression,
   and its BlitColor state invalidation. Do not replace it with the earlier narrow
   PR339 port at `64d9962846b48a377f98321df5d7c861fd89c14a`.
-- [ ] Add production-policy regressions covering all guest masks and attachments,
+- [x] Add production-policy regressions covering all guest masks and attachments,
   absent/present fragment stages, partial/dual-source exports and unchanged depth/
   stencil behavior. Demonstrate failure when restoring unconditional guest masks
   or omitting transitions; share the tested policy across static and EDS3 paths.
-- [ ] Verify UpdateDynamicStates uses the already selected pipeline for masks.
+- [x] Verify UpdateDynamicStates uses the already selected pipeline for masks.
   Cover internal DrawTexture's unrestricted output masks and transitions without
   guest register changes, including repeated bindings and unrelated dirty flags.
-- [ ] Verify the adopted PR353 BlitColor state-invalidation correction. Exercise real
+- [x] Verify the adopted PR353 BlitColor state-invalidation correction. Exercise real
   StateTracker invalidation between unchanged no-export states, in addition to
   helper tests. Add a focused structural regression for the exact BlitColor
   overload's top-level invalidation after recording, with negative mutations for
   missing, worker-lambda and wrong-overload calls. Record that these tests do not
   execute the full Vulkan draw/blit/draw path, which requires device resources.
-- [ ] Run mask/state regressions and compile all affected production units;
+- [x] Run mask/state regressions and compile all affected production units;
   commit with original PR attribution and recorded runtime limitations.
+
+Evidence: `docs/superpowers/validation/2026-11-07-fragment-masks.md`.
+Restored focused 6 cases / 4,714 assertions; full main 864 cases / 70,030,538
+assertions; structural 5/5; emitted dual-source SPIR-V 1/1; GUI CTest 4/4.
 
 ## Task 5: #293 bounded pipeline retention
 
