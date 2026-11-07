@@ -2953,11 +2953,15 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
     const bool reads_size_word = !(table_pointer && !is_written) && !native_pointer;
     const u64 next_qword = reads_size_word ? gpu_memory->Read<u64>(ssbo_addr + 8) : 0;
     const u32 alignment = runtime.GetStorageBufferAlignment();
+    const bool read_only_table = table_pointer && !is_written;
+    const u64 max_storage_range =
+        read_only_table ? (std::min)(runtime.GetMaxStorageBufferRange(), u64{1_GiB}) : 0;
     struct CachedBinding {
         size_t owner;
         GPUVAddr gpu_addr;
         u64 next_qword;
         u64 serial;
+        u64 max_storage_range;
         u32 alignment;
         u32 flags;
         Binding binding;
@@ -2973,22 +2977,27 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
         const CachedBinding& cached = set[way];
         if (cached.owner == owner && cached.gpu_addr == gpu_addr &&
             cached.next_qword == next_qword && cached.serial == serial &&
-            cached.alignment == alignment && cached.flags == flags && !Nx2Perf::Verify()) {
+            cached.alignment == alignment && cached.flags == flags &&
+            cached.max_storage_range == max_storage_range && !Nx2Perf::Verify()) {
             const Binding hit = cached.binding;
             std::rotate(set.begin(), set.begin() + way, set.begin() + way + 1);
             return hit;
         }
     }
     const Binding binding = [&]() -> Binding {
+        const GPUVAddr aligned_gpu_addr = Common::AlignDown(gpu_addr, alignment);
+        const u32 prefix = static_cast<u32>(gpu_addr - aligned_gpu_addr);
         u32 size = [&]() {
-            const u32 memory_layout_size =
-                static_cast<u32>(gpu_memory->GetMemoryLayoutSize(gpu_addr));
+            const u32 memory_layout_size = static_cast<u32>((std::min)(
+                u64{gpu_memory->GetMemoryLayoutSize(gpu_addr)},
+                u64{(std::numeric_limits<u32>::max)()}));
             // A pointer read from a table in memory is the base of an object pool, read anywhere in
-            // it (Ocarina of Time's grass instances lie 12-18 MiB past theirs): bound to the end of
-            // its mapping, up to 64 MiB. The 8 MiB cap made those reads return 0 and culled every
-            // blade. Written pools keep the cap: a write marks the whole binding GPU-modified.
-            if (table_pointer && !is_written) {
-                return (std::min)(memory_layout_size, static_cast<u32>(64_MiB));
+            // it. Ocarina of Time's light probes reach about 130 MiB past theirs, beyond the old
+            // 64 MiB cap. Bound the pool by the device range and 1 GiB, including its base prefix.
+            // Written pools keep their cap: a write marks the whole binding GPU-modified.
+            if (read_only_table) {
+                const u64 available = max_storage_range - (std::min)(max_storage_range, u64{prefix});
+                return static_cast<u32>((std::min)(u64{memory_layout_size}, available));
             }
             // A native (Switch 2) compute program's pointer is bare: the word after it is another
             // parameter (a dimension, stride or texture handle), not an NVN buffer size. Taking it
@@ -3005,15 +3014,16 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
             }
             return (std::min)(memory_layout_size, static_cast<u32>(8_MiB));
         }();
-        if ((native_pointer || table_pointer) && size != 0) {
+        if (read_only_table && size != 0) {
+            // Include the alignment prefix so the whole binding belongs to one device range.
+            const u64 continuous =
+                gpu_memory->MaxContinuousRange(aligned_gpu_addr, u64{prefix} + size);
+            size = static_cast<u32>(continuous - (std::min)(continuous, u64{prefix}));
+        } else if ((native_pointer || table_pointer) && size != 0) {
             // Stop where the mapping or its device range does: the binding is one device range, and
             // a written one isn't split into separate ranges without sparse sources.
             size = static_cast<u32>(gpu_memory->MaxContinuousRange(gpu_addr, size));
         }
-
-        // Alignment only applies to the offset of the buffer
-        const GPUVAddr aligned_gpu_addr = Common::AlignDown(gpu_addr, alignment);
-        const u32 aligned_size = static_cast<u32>(gpu_addr - aligned_gpu_addr) + size;
 
         const std::optional<DAddr> aligned_device_addr =
             gpu_memory->GpuToCpuAddress(aligned_gpu_addr);
@@ -3027,19 +3037,19 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
         // The end address used for size calculation does not need to be aligned
         const DAddr cpu_end = Common::AlignUp(*device_addr + size, Core::DEVICE_PAGESIZE);
 
-        u32 binding_size = static_cast<u32>(cpu_end - *aligned_device_addr);
-        if (is_written) {
-            binding_size = aligned_size;
-        }
+        // Page tracking rounds the end up, but the actual descriptor must still fit the limit.
+        const u64 binding_size = is_written ? u64{prefix} + size : cpu_end - *aligned_device_addr;
+        const u64 binding_limit =
+            read_only_table ? max_storage_range : u64{(std::numeric_limits<u32>::max)()};
         return Binding{
             .device_addr = *aligned_device_addr,
             .gpu_addr = aligned_gpu_addr,
-            .size = binding_size,
+            .size = static_cast<u32>((std::min)(binding_size, binding_limit)),
             .buffer_id = BufferId{},
         };
     }();
     std::rotate(set.begin(), set.end() - 1, set.end());
-    set[0] = {owner, gpu_addr, next_qword, serial, alignment, flags, binding};
+    set[0] = {owner, gpu_addr, next_qword, serial, max_storage_range, alignment, flags, binding};
     return binding;
 }
 

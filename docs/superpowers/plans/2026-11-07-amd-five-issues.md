@@ -69,21 +69,21 @@ src/video_core/renderer_vulkan/vk_buffer_cache.{h,cpp};
 src/video_core/renderer_opengl/gl_buffer_cache.h; gl_device.{h,cpp};
 src/tests/video_core/buffer_cache_ports.cpp.
 
-- [ ] Read immutable PR351 diff fd4141e48c35e7436abc36b0031e2d05782bf4bf.
+- [x] Read immutable PR351 diff fd4141e48c35e7436abc36b0031e2d05782bf4bf.
   Add runtime GetMaxStorageBufferRange queries for both backends, with the GL
   query using glGetInteger64v(GL_MAX_SHADER_STORAGE_BLOCK_SIZE).
-- [ ] Extend the actual BufferCache fixture's Runtime with a configurable limit.
+- [x] Extend the actual BufferCache fixture's Runtime with a configurable limit.
   Exercise StorageBufferBinding with table=true and read-only mapping beyond
   128MiB; the old 64MiB implementation must fail the new expected interval.
-- [ ] Add unaligned starts, limits below the prefix, lengths above u32, continuous
+- [x] Add unaligned starts, limits below the prefix, lengths above u32, continuous
   mapping breaks, null mappings and unchanged writable/native policies. Run the
   new cases against old production code and record the failures.
-- [ ] Adapt the attributed port with saturating u64 arithmetic. Derive available
+- [x] Adapt the attributed port with saturating u64 arithmetic. Derive available
   bytes from the backend limit, base-alignment prefix and actual end rounding;
   do not use the original fixed 64KiB reservation. Clamp the final bound interval,
   not merely the requested payload. Preserve mapping continuity and 1GiB ceiling.
-- [ ] Run buffer regressions and compile both Vulkan and OpenGL consumers.
-- [ ] Commit with source PR/commit attribution and exact verification results.
+- [x] Run buffer regressions and compile both Vulkan and OpenGL consumers.
+- [x] Commit with source PR/commit attribution and exact verification results.
 
 ## Task 3: #325 NaN-defined min/max/clamp
 

@@ -207,6 +207,11 @@ public:
         return static_cast<u32>(device.GetShaderStorageBufferAlignment());
     }
 
+    // Bindings are cached across pipelines, so use the same limit for GLASM and GLSL.
+    u64 GetMaxStorageBufferRange() const {
+        return device.GetMaxShaderStorageBlockSize();
+    }
+
 private:
     static constexpr std::array PABO_LUT{
         GL_VERTEX_PROGRAM_PARAMETER_BUFFER_NV,          GL_TESS_CONTROL_PROGRAM_PARAMETER_BUFFER_NV,

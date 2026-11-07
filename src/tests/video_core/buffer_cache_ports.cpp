@@ -67,6 +67,9 @@ struct Runtime {
     u32 GetStorageBufferAlignment() const {
         return alignment;
     }
+    u64 GetMaxStorageBufferRange() const {
+        return storage_range;
+    }
     u32 GetUniformBufferAlignment() const {
         return 1;
     }
@@ -147,6 +150,7 @@ struct Runtime {
     }
 
     u32 alignment{256};
+    u64 storage_range{1ULL << 30};
     u32 allocations{}, downloads{}, uploads{}, finishes{}, waits{};
     u32 host_read_barriers{};
     u64 upload_bytes{}, waited_tick{};
@@ -312,9 +316,9 @@ struct Fixture {
         device.UnregisterProcess(asid);
         system.Kernel().UnregisterKernelObject(process.get());
     }
-    void ResetMemory() {
+    void ResetMemory(u32 address_bits = 32) {
         memory.reset();
-        memory.emplace(system, device, 32, 1ULL << 31, 16);
+        memory.emplace(system, device, address_bits, 1ULL << (address_bits - 1), 16);
         memory->BindRasterizer(&rasterizer);
         memory->Map(0x100000, 0x10000, 0x10000, Tegra::PTEKind::PITCH, true);
     }
@@ -376,13 +380,109 @@ TEST_CASE("Storage binding cache preserves native and table size policies", "[bu
     f.Descriptor(base, 256);
     REQUIRE(f.Bind().size == 4096);
     REQUIRE(f.Bind(false, true).size == 8 << 20);
-    REQUIRE(f.Bind(false, false, true).size == 64 << 20);
+    REQUIRE(f.Bind(false, false, true).size == 80 << 20);
     REQUIRE(f.Bind(true, false, true).size == 256);
     f.Descriptor(base, (1ULL << 32) | 256);
     REQUIRE(f.Bind().size == 8 << 20);
-    REQUIRE(f.Bind(false, false, true).size == 64 << 20);
+    REQUIRE(f.Bind(false, false, true).size == 80 << 20);
     f.Descriptor(base + (79 << 20), 0);
     REQUIRE(f.Bind(false, false, true).size == 1 << 20);
+}
+
+TEST_CASE("Read-only table bindings reach the mapped pool within changing device limits",
+          "[buffer_ports][fog_range]") {
+    Fixture f;
+    constexpr GPUVAddr base = 0x4000000;
+    constexpr u32 mib = 1U << 20;
+    // Only GPU page metadata is mapped: these tests never allocate or read a host pool.
+    f.memory->Map(base, 0x10000000, 320 * mib, Tegra::PTEKind::PITCH, true);
+    f.Descriptor(base, 256);
+    for (const u64 limit : {64ULL * mib, 128ULL * mib, 256ULL * mib, 512ULL * mib}) {
+        CAPTURE(limit);
+        f.runtime.storage_range = limit;
+        const auto binding = f.Bind(false, false, true);
+        CHECK(binding.device_addr == 0x10000000);
+        CHECK(binding.size == (std::min)(limit, u64{320 * mib}));
+        CHECK(binding.size <= limit);
+        CHECK(f.Bind(true, false, true).size == 256);
+        CHECK(f.Bind(false, true).size == 8 * mib);
+        CHECK(f.Bind().size == Core::DEVICE_PAGESIZE);
+    }
+    f.Descriptor(base, (1ULL << 32) | 256);
+    CHECK(f.Bind(true, false, true).size == 8 * mib);
+}
+
+TEST_CASE("Read-only table limits include the base prefix and rounded device end",
+          "[buffer_ports][fog_range]") {
+    Fixture f;
+    constexpr GPUVAddr base = 0x4000000;
+    f.memory->Map(base, 0x10000000, 256 << 20, Tegra::PTEKind::PITCH, true);
+    for (const u32 alignment : {256U, 4096U, 65536U}) {
+        f.runtime.alignment = alignment;
+        for (const u64 offset : {0x123ULL, 0xf123ULL}) {
+            f.Descriptor(base + offset, 0);
+            for (const u64 limit : {0ULL, 16ULL, 36ULL, 4096ULL, 0x10013ULL, 128ULL << 20}) {
+                CAPTURE(alignment, offset, limit);
+                f.runtime.storage_range = limit;
+                const u64 prefix = offset % alignment;
+                const auto binding = f.Bind(false, false, true);
+                CHECK(binding.size == (limit > prefix ? limit : 0));
+                CHECK(binding.size <= limit);
+            }
+        }
+    }
+    f.runtime.alignment = 256;
+    f.runtime.storage_range = 256;
+    f.Descriptor(base + 0xf23, 0);
+    const auto tiny = f.Bind(false, false, true);
+    CHECK(tiny.device_addr == 0x10000f00);
+    CHECK(tiny.size == 256);
+}
+
+TEST_CASE("Read-only table bindings saturate wide layouts before narrowing",
+          "[buffer_ports][fog_range]") {
+    Fixture f;
+    f.ResetMemory(36);
+    constexpr GPUVAddr base = 0x4000000;
+    constexpr u64 length = (1ULL << 32) + 0x10000;
+    // Adjacent GPU mappings share a kind but reuse physical ranges below 4 GiB.
+    f.memory->Map(base, 0x10000000, 1ULL << 31, Tegra::PTEKind::PITCH, true);
+    f.memory->Map(base + (1ULL << 31), 0x10000000, 1ULL << 31,
+                  Tegra::PTEKind::PITCH, true);
+    f.memory->Map(base + (1ULL << 32), 0x10000000, 0x10000,
+                  Tegra::PTEKind::PITCH, true);
+    REQUIRE(f.memory->GetMemoryLayoutSize(base) == length);
+    f.runtime.storage_range = 1ULL << 33;
+    f.Descriptor(base, 0);
+    CHECK(f.Bind(false, false, true).size == 1U << 30);
+    f.Descriptor(base + 0x123, 0);
+    const auto unaligned = f.Bind(false, false, true);
+    CHECK(unaligned.device_addr == 0x10000100);
+    CHECK(unaligned.size == 1U << 30);
+    CHECK(f.Bind(false, true).size == (8U << 20) + 0xf00);
+    CHECK(f.Bind(true, false, true).size == (8U << 20) + 0x23);
+    f.Descriptor(base + 0x123, 0xfffffff0ULL);
+    CHECK(f.Bind().size == 0xffffffffU);
+    CHECK(f.Bind(true).size == 0xffffffffU);
+}
+
+TEST_CASE("Read-only table bindings stop at holes and discontinuous device mappings",
+          "[buffer_ports][fog_range]") {
+    Fixture f;
+    constexpr GPUVAddr base = 0x4000000;
+    constexpr u64 length = 256ULL << 20;
+    f.memory->Map(base, 0x10000000, length, Tegra::PTEKind::PITCH, true);
+    f.Descriptor(base + 0x123, 0);
+    f.memory->Map(base + (160 << 20), 0x30000000, 0x10000, Tegra::PTEKind::PITCH, true);
+    CHECK(f.Bind(false, false, true).size == (160U << 20) - 0x100);
+    f.memory->Unmap(base + (144 << 20), 0x10000);
+    CHECK(f.Bind(false, false, true).size == (144U << 20) - 0x100);
+    f.memory->MapSparse(base, 0x10000, true);
+    CHECK(f.Bind(false, false, true).size == 0);
+    f.memory->Unmap(base, 0x10000);
+    CHECK(f.Bind(false, false, true).size == 0);
+    f.Descriptor(0, 0);
+    CHECK(f.Bind(false, false, true).size == 0);
 }
 
 TEST_CASE("Storage binding cache does not reuse a destroyed address space", "[buffer_ports]") {
@@ -708,7 +808,7 @@ TEST_CASE("Compute storage sizing is special only inside an active native DLSS d
         const u64 size = 256;
         std::memcpy(f.bytes + 0x100, &base, sizeof(base));
         std::memcpy(f.bytes + 0x108, &size, sizeof(size));
-        CHECK(Access::Compute(*f.cache, channel, false, 0).size == 64 << 20);
+        CHECK(Access::Compute(*f.cache, channel, false, 0).size == 80 << 20);
         CHECK(Access::Compute(*f.cache, channel, true, 0).size ==
               (native && dlss ? 8 << 20 : 256));
     }
