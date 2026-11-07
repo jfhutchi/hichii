@@ -790,6 +790,7 @@ ConfigureInputPlayer::ConfigureInputPlayer(QWidget* parent, std::size_t player_i
             ui->controllerFrame->SetController(emulated_controller);
         }
         emulated_controller->SetNpadStyleIndex(type);
+        UpdateInputProfiles();
     });
 
     connect(ui->comboDevices, qOverload<int>(&QComboBox::activated), this,
@@ -1573,6 +1574,11 @@ bool ConfigureInputPlayer::eventFilter(QObject* object, QEvent* event) {
     return object->eventFilter(object, event);
 }
 
+std::size_t ConfigureInputPlayer::GetProfilePlayerIndex() const {
+    return InputProfiles::GetPlayerIndex(
+        player_index, emulated_controller->GetNpadIdType() == Core::HID::NpadIdType::Handheld);
+}
+
 void ConfigureInputPlayer::CreateProfile() {
     const auto profile_name =
         LimitableInputDialog::GetText(this, tr("New Profile"), tr("Enter a profile name:"), 1, 30,
@@ -1590,7 +1596,7 @@ void ConfigureInputPlayer::CreateProfile() {
 
     ApplyConfiguration();
 
-    if (!profiles->CreateProfile(profile_name.toStdString(), player_index)) {
+    if (!profiles->CreateProfile(profile_name.toStdString(), GetProfilePlayerIndex())) {
         QMessageBox::critical(this, tr("Create Input Profile"),
                               tr("Failed to create the input profile \"%1\"").arg(profile_name));
         UpdateInputProfiles();
@@ -1634,7 +1640,7 @@ void ConfigureInputPlayer::LoadProfile() {
 
     ApplyConfiguration();
 
-    if (!profiles->LoadProfile(profile_name.toStdString(), player_index)) {
+    if (!profiles->LoadProfile(profile_name.toStdString(), GetProfilePlayerIndex())) {
         QMessageBox::critical(this, tr("Load Input Profile"),
                               tr("Failed to load the input profile \"%1\"").arg(profile_name));
         UpdateInputProfiles();
@@ -1646,7 +1652,6 @@ void ConfigureInputPlayer::LoadProfile() {
 }
 
 void ConfigureInputPlayer::SaveProfile() {
-    static constexpr size_t HANDHELD_INDEX = 8;
     const QString profile_name = ui->comboProfiles->itemText(ui->comboProfiles->currentIndex());
 
     if (profile_name.isEmpty()) {
@@ -1655,12 +1660,7 @@ void ConfigureInputPlayer::SaveProfile() {
 
     ApplyConfiguration();
 
-    // When we're in handheld mode, only the handheld emulated controller bindings are updated
-    const bool is_handheld = player_index == 0 && emulated_controller->GetNpadIdType() ==
-                                                      Core::HID::NpadIdType::Handheld;
-    const auto profile_player_index = is_handheld ? HANDHELD_INDEX : player_index;
-
-    if (!profiles->SaveProfile(profile_name.toStdString(), profile_player_index)) {
+    if (!profiles->SaveProfile(profile_name.toStdString(), GetProfilePlayerIndex())) {
         QMessageBox::critical(this, tr("Save Input Profile"),
                               tr("Failed to save the input profile \"%1\"").arg(profile_name));
         UpdateInputProfiles();
@@ -1676,7 +1676,7 @@ void ConfigureInputPlayer::UpdateInputProfiles() {
     int profile_index = -1;
 
     // Add every available profile and search the player profile to set it as current one
-    auto& current_profile = Settings::values.players.GetValue()[player_index].profile_name;
+    auto& current_profile = Settings::values.players.GetValue()[GetProfilePlayerIndex()].profile_name;
     std::vector<std::string> profile_names = profiles->GetInputProfileNames();
     std::string profile_name;
     for (size_t i = 0; i < profile_names.size(); i++) {

@@ -158,6 +158,8 @@ private:
     /// Creates a controller profile.
     void CreateProfile();
 
+    std::size_t GetProfilePlayerIndex() const;
+
     /// Deletes the selected controller profile.
     void DeleteProfile();
 

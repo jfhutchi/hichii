@@ -62,7 +62,7 @@ void Config::Initialize(const std::optional<std::string> config_path) {
     Reload();
 }
 
-void Config::WriteToIni() const {
+bool Config::WriteToIni() const {
     std::string config_type;
     switch (type) {
     case ConfigType::GlobalConfig:
@@ -85,18 +85,21 @@ void Config::WriteToIni() const {
 
     if (fp == nullptr) {
         LOG_ERROR(Frontend, "Config file could not be saved!");
-        return;
+        return false;
     }
 
     CSimpleIniA::FileWriter writer(fp);
     const SI_Error rc = config->Save(writer, false);
-    if (rc < 0) {
+    const bool write_failed = ferror(fp) != 0;
+    const int close_result = fclose(fp);
+    if (rc < 0 || write_failed || close_result != 0) {
         LOG_ERROR(Frontend, "Config file could not be saved!");
+        return false;
     }
-    fclose(fp);
+    return true;
 }
 
-void Config::SetUpIni() {
+bool Config::SetUpIni(bool create_if_missing) {
     config = std::make_unique<CSimpleIniA>();
     config->SetUnicode(true);
     config->SetSpaces(false);
@@ -111,26 +114,27 @@ void Config::SetUpIni() {
     FILE* fp = nullptr;
 #ifdef _WIN32
     _wfopen_s(&fp, Common::UTF8ToUTF16W(config_loc).data(), L"rb, ccs=UTF-8");
-    if (fp == nullptr) {
+    if (fp == nullptr && create_if_missing) {
         fp = _wfopen(Common::UTF8ToUTF16W(config_loc).data(), L"wb, ccs=UTF-8");
     }
 #else
     fp = fopen(config_loc.c_str(), "rb");
-    if (fp == nullptr) {
+    if (fp == nullptr && create_if_missing) {
         fp = fopen(config_loc.c_str(), "wb");
     }
 #endif
 
     if (fp == nullptr) {
         LOG_ERROR(Frontend, "Config file could not be loaded!");
-        return;
+        return false;
     }
 
     const SI_Error rc = config->LoadFile(fp);
-    fclose(fp);
-    if (rc < 0) {
+    const bool read_failed = ferror(fp) != 0;
+    const int close_result = fclose(fp);
+    if (rc < 0 || read_failed || close_result != 0) {
         LOG_ERROR(Frontend, "Config file could not be loaded!");
-        return;
+        return false;
     }
 
 #ifndef __ANDROID__
@@ -148,6 +152,7 @@ void Config::SetUpIni() {
         EndGroup();
     }
 #endif
+    return true;
 }
 
 bool Config::IsCustomConfig() const {

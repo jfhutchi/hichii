@@ -272,6 +272,7 @@ option(ENABLE_WIFI_SCAN "Enable WiFi scanning" OFF)
 cmake_dependent_option(USE_DISCORD_PRESENCE "Enables Discord Rich Presence" OFF "ENABLE_QT" OFF)
 
 option(YUZU_TESTS "Compile tests" "${BUILD_TESTING}")
+option(YUZU_QT_COMPATIBILITY_TESTS "Compile QtTest compatibility report tests" ON)
 
 # Install udev rules on Linux (mainly for gyros)
 # Only acts on joysticks and nothing else.

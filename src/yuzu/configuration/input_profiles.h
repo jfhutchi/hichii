@@ -27,6 +27,8 @@ public:
 
     static bool IsProfileNameValid(std::string_view profile_name);
 
+    static std::size_t GetPlayerIndex(std::size_t player_index, bool is_handheld);
+
     bool CreateProfile(const std::string& profile_name, std::size_t player_index);
     bool DeleteProfile(const std::string& profile_name);
     bool LoadProfile(const std::string& profile_name, std::size_t player_index);

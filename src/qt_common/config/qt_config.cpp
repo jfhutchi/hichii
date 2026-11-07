@@ -585,16 +585,21 @@ std::vector<Settings::BasicSetting*>& QtConfig::FindRelevantList(Settings::Categ
     return UISettings::values.linkage.by_category[category];
 }
 
-void QtConfig::ReadQtControlPlayerValues(std::size_t player_index) {
+bool QtConfig::ReadQtControlPlayerValues(std::size_t player_index) {
+    // Load the saved profile rather than a previous, potentially failed write's cached values.
+    if (!SetUpIni(false)) {
+        return false;
+    }
     BeginGroup(Settings::TranslateCategory(Settings::Category::Controls));
 
     ReadPlayerValues(player_index);
     ReadQtPlayerValues(player_index);
 
     EndGroup();
+    return true;
 }
 
-void QtConfig::SaveQtControlPlayerValues(std::size_t player_index) {
+bool QtConfig::SaveQtControlPlayerValues(std::size_t player_index) {
     BeginGroup(Settings::TranslateCategory(Settings::Category::Controls));
 
     LOG_DEBUG(Config, "Saving players control configuration values");
@@ -603,5 +608,5 @@ void QtConfig::SaveQtControlPlayerValues(std::size_t player_index) {
 
     EndGroup();
 
-    WriteToIni();
+    return WriteToIni();
 }

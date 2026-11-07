@@ -19,8 +19,8 @@ public:
     void ReloadAllValues() override;
     void SaveAllValues() override;
 
-    void ReadQtControlPlayerValues(std::size_t player_index);
-    void SaveQtControlPlayerValues(std::size_t player_index);
+    bool ReadQtControlPlayerValues(std::size_t player_index);
+    bool SaveQtControlPlayerValues(std::size_t player_index);
 
 protected:
     void ReadQtValues();

@@ -175,6 +175,16 @@ add_executable(update_checker_tests
 target_link_libraries(update_checker_tests PRIVATE common Catch2::Catch2WithMain)
 add_test(NAME update_checker_tests COMMAND update_checker_tests)
 
+if (ENABLE_QT)
+    add_executable(input_profile_tests
+        input_common/input_profiles.cpp
+        ../yuzu/configuration/input_profiles.cpp)
+    target_link_libraries(input_profile_tests PRIVATE
+        qt_common frontend_common input_common common Qt6::Core
+        SimpleIni::SimpleIni Catch2::Catch2 ${PLATFORM_LIBRARIES})
+    add_test(NAME input_profile_tests COMMAND input_profile_tests)
+endif()
+
 if (NOT ANDROID)
     add_executable(config_tests
         common/first_run_config.cpp

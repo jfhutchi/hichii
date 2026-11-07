@@ -83,6 +83,11 @@ bool InputProfiles::IsProfileNameValid(std::string_view profile_name) {
     return profile_name.find_first_of("<>:;\"/\\|,.!?*") == std::string::npos;
 }
 
+std::size_t InputProfiles::GetPlayerIndex(std::size_t player_index, bool is_handheld) {
+    constexpr std::size_t handheld_index = 8;
+    return player_index == 0 && is_handheld ? handheld_index : player_index;
+}
+
 bool InputProfiles::CreateProfile(const std::string& profile_name, std::size_t player_index) {
     if (ProfileExistsInMap(profile_name)) {
         return false;
@@ -91,7 +96,11 @@ bool InputProfiles::CreateProfile(const std::string& profile_name, std::size_t p
     map_profiles.insert_or_assign(
         profile_name, std::make_unique<QtConfig>(profile_name, Config::ConfigType::InputProfile));
 
-    return SaveProfile(profile_name, player_index);
+    if (!SaveProfile(profile_name, player_index)) {
+        map_profiles.erase(profile_name);
+        return false;
+    }
+    return true;
 }
 
 bool InputProfiles::DeleteProfile(const std::string& profile_name) {
@@ -104,7 +113,22 @@ bool InputProfiles::DeleteProfile(const std::string& profile_name) {
         map_profiles.erase(profile_name);
     }
 
-    return !ProfileExistsInMap(profile_name) && !ProfileExistsInFilesystem(profile_name);
+    if (ProfileExistsInMap(profile_name) || ProfileExistsInFilesystem(profile_name)) {
+        return false;
+    }
+
+    auto& players = Settings::values.players;
+    const bool using_global = players.UsingGlobal();
+    for (const bool global : {false, true}) {
+        players.SetGlobal(global);
+        for (auto& player : players.GetValue()) {
+            if (player.profile_name == profile_name) {
+                player.profile_name.clear();
+            }
+        }
+    }
+    players.SetGlobal(using_global);
+    return true;
 }
 
 bool InputProfiles::LoadProfile(const std::string& profile_name, std::size_t player_index) {
@@ -119,7 +143,10 @@ bool InputProfiles::LoadProfile(const std::string& profile_name, std::size_t pla
 
     LOG_INFO(Config, "Loading input profile `{}`", profile_name);
 
-    map_profiles[profile_name]->ReadQtControlPlayerValues(player_index);
+    if (!map_profiles[profile_name]->ReadQtControlPlayerValues(player_index)) {
+        return false;
+    }
+    Settings::values.players.GetValue()[player_index].profile_name = profile_name;
     return true;
 }
 
@@ -128,7 +155,10 @@ bool InputProfiles::SaveProfile(const std::string& profile_name, std::size_t pla
         return false;
     }
 
-    map_profiles[profile_name]->SaveQtControlPlayerValues(player_index);
+    if (!map_profiles[profile_name]->SaveQtControlPlayerValues(player_index)) {
+        return false;
+    }
+    Settings::values.players.GetValue()[player_index].profile_name = profile_name;
     return true;
 }
 
