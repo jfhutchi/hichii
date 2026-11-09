@@ -1,0 +1,21 @@
+{
+  "Build-OotFreshPgo.ps1": "be758728b0ddd48148266ac5f6406c590b325507082d84dfef9a64c5c8567541",
+  "Build-OotFixUpstream.ps1": "d024485d761c1ce6ddf72acea6bc43291f43f8c7a5b45b5054fada4a21289552",
+  "Build-OotStateDispatch.ps1": "849f84fea97935bfcd0d3d8e291a92ce1c0183c95a4cb9f6e9bdbcfb12db9a9b",
+  "Collect-OotTelemetry.ps1": "10dd502002f912e528adc455c169a3a964c119e4dbe3038d3443a811c839b977",
+  "Collect-OotClocks.ps1": "02b97bb01c9635c58c39fb7ca9c1609cab668b331238ccb8455783e8ad385f46",
+  "Measure-OotFixRoute.py": "35fa1caf209b5ebd4bd695a665e8628c0e49356328aac067bde0d0db1fed6d62",
+  "Measure-LatestLichiiRoute.py": "c34c8ebf6ebeebeafa2630e8f0c73febc14987e09e1c2eaed6cc64d050304cd2",
+  "present_ring_locator.py": "bbcbbbaf205c6f4ebe5398c9387cc241c3460631fe8b0ada690960c521df5530",
+  "oot_benchmark_inputs.py": "9a32e17ef38c4f7af4c2e715f4c2be6fededd40a12939081138d767380381878",
+  "test_present_ring_locator.py": "aa25a4f7751a61706184c8a09276f532a6b30ee48e2960231554f8ec98bd2967",
+  "Summarize-OotFixRuns.py": "2d8914370b6f4096b994881da874dd8816cec5fe7f15020333e26886d81320a1",
+  "Summarize-OotFixTelemetry.py": "2a8a3cb3c575270641a872a1fe21d6fe785285905726bee80e2e81ab07da0d20",
+  "Train-OotFreshPgo.py": "b428233498c1852f27cd46e20bbd717f73a87eaf1a312ff8ddce0f0c1928ef49",
+  "Start-OotFixTest.ps1": "d616e256cc018aa3f905d185423936c31fde49faaf55e3fb1e5b3d1f5f7cd46d",
+  "Read-OotThreadPlacement.py": "e48d290eab84633c14f763d6dfdad8800c4255389566615ca8ecf950668358bd",
+  "Correlate-OotFixRun.py": "c33160623fffefb8f832957480206fe5083715e475ddb9ec98c330fd0cfe41b9",
+  "Correlate-LichiiLiveStutters.py": "d8ead90b3ebe558bb522c9320e6cb1f9d648a7212f319fbb0743fb05546957df",
+  "evaluate_oot.py": "b13c3f82ab61056e1e2963c2329aa025b97fe8bed668fd56aa270ed1227a4b10",
+  "Send-OotGameInput.py": "15cfc0368256bfec61a90154de60a85ea73a897c54aaf9719c8960b25efe4c99"
+}
