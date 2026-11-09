@@ -281,6 +281,70 @@ std::array<u32, 3> FifoInstruction(u32 method, bool end) {
 
 } // Anonymous namespace
 
+TEST_CASE("Maxwell3D same-value state writes still update tracked shadow RAM",
+          "[video_core][maxwell_fast_method][maxwell_state_write_regression]") {
+    using Control = Maxwell3D::Regs::ShadowRamControl;
+    constexpr u32 state = MAXWELL3D_REG_INDEX(shadow_scratch) + 1;
+    for (const auto control : {Control::Track, Control::TrackWithFilter}) {
+        CAPTURE(static_cast<u32>(control));
+        Fixture f;
+        REQUIRE_FALSE(f.fast.execution_mask[state]);
+        REQUIRE(f.fast.execution_mask[ShadowControl]);
+        f.Call(ShadowControl, static_cast<u32>(Control::Track), true);
+        f.Call(state, 17, true);
+        f.Call(ShadowControl, static_cast<u32>(Control::Passthrough), true);
+        f.Call(state, 29, true);
+        REQUIRE(f.fast.regs.reg_array[state] == 29);
+        REQUIRE(f.fast.shadow_state.reg_array[state] == 17);
+
+        f.Call(ShadowControl, static_cast<u32>(control), true);
+        f.slow.dirty.flags.reset();
+        f.fast.dirty.flags.reset();
+        // The register already holds 29, but its tracked shadow must still change.
+        f.Call(state, 29, true);
+        f.Compare();
+        REQUIRE(f.fast.regs.reg_array[state] == 29);
+        REQUIRE(f.fast.shadow_state.reg_array[state] == 29);
+
+        f.Call(ShadowControl, static_cast<u32>(Control::Passthrough), true);
+        f.Call(state, 43, true);
+        f.Call(ShadowControl, static_cast<u32>(Control::Replay), true);
+        f.Call(state, 0, true);
+        f.Compare();
+        REQUIRE(f.fast.regs.reg_array[state] == 29);
+    }
+}
+
+TEST_CASE("Maxwell3D replay compares the shadow value before suppressing a state write",
+          "[video_core][maxwell_fast_method][maxwell_state_write_regression]") {
+    using Control = Maxwell3D::Regs::ShadowRamControl;
+    constexpr u32 state = MAXWELL3D_REG_INDEX(shadow_scratch) + 1;
+    Fixture f;
+    REQUIRE_FALSE(f.fast.execution_mask[state]);
+    f.Call(ShadowControl, static_cast<u32>(Control::Track), true);
+    f.Call(state, 17, true);
+    f.Call(ShadowControl, static_cast<u32>(Control::Passthrough), true);
+    f.Call(state, 29, true);
+    f.Call(ShadowControl, static_cast<u32>(Control::Replay), true);
+    f.slow.dirty.flags.reset();
+    f.fast.dirty.flags.reset();
+
+    // An incoming value equal to the register must not suppress a different replayed value.
+    f.Call(state, 29, true);
+    f.Compare();
+    REQUIRE(f.fast.regs.reg_array[state] == 17);
+    REQUIRE(f.fast.shadow_state.reg_array[state] == 17);
+    REQUIRE(f.fast.dirty.flags.any());
+
+    f.slow.dirty.flags.reset();
+    f.fast.dirty.flags.reset();
+    // An incoming value different from the register still replays the unchanged shadow.
+    f.Call(state, 43, true);
+    f.Compare();
+    REQUIRE(f.fast.regs.reg_array[state] == 17);
+    REQUIRE(f.fast.shadow_state.reg_array[state] == 17);
+}
+
 TEST_CASE("Maxwell3D fast method dispatch matches CallMethod on random method streams",
           "[video_core][maxwell_fast_method]") {
     Fixture f;
